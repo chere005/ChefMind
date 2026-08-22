@@ -68,7 +68,11 @@ try "refuses when the API does not know the space" \
   's|^  ANSWER=$(api_spaces .*|  ANSWER=\x27{"ok":true,"spaces":["something-else"]}\x27|' --yes-prod
 
 copy="./_guardcheck-pass-$$.sh"
-sed -e 's|^  ANSWER=$(api_spaces .*|  ANSWER=\x27{"ok":true,"spaces":["chef"]}\x27|' \
+# `exit 0` right after the gate returns. Without it this copy ran the whole
+# pipeline — both typechecks, the core suite, CalMind's server suite and a
+# full expo export — to prove one thing that had already been printed by then.
+sed -e 's|^check_api$|check_api; exit 0|' \
+    -e 's|^  ANSWER=$(api_spaces .*|  ANSWER=\x27{"ok":true,"spaces":["chef"]}\x27|' \
     -e 's|^\( *\)ssh |\1echo "   [guardcheck] would ssh: " |' \
     -e 's|^\( *\)rsync |\1echo "   [guardcheck] would rsync: " |' \
     -e 's|^\( *\)curl |\1echo "   [guardcheck] would curl: " |' \

@@ -34,8 +34,21 @@ if (preg_match('#^/calmind/api/#', $uri)) {
 if (str_starts_with($uri, '/ChefMind')) {
     $rel = substr($uri, strlen('/ChefMind'));
     if ($rel === '' || $rel === '/') { $rel = '/index.html'; }
-    $file = $repo . '/app/dist' . $rel;
-    if (is_file($file)) {
+    $dist = $repo . '/app/dist';
+    // CONTAINMENT, not string concatenation.
+    //
+    // Today `php -S` normalizes `..` out of REQUEST_URI before this script
+    // ever runs, so the concatenated form did NOT leak — measured, both ways,
+    // rather than assumed in either direction. What it did was rest the
+    // containment of a server running beside deploy.conf on a normalization
+    // nothing here states, tests, or controls: swap the harness, or read this
+    // path out of any other source, and the guarantee is gone with no diff to
+    // show for it. So the check is written down where the file is opened.
+    $file = realpath($dist . $rel);
+    $root = realpath($dist);
+    if ($file !== false && $root !== false
+        && ($file === $root || str_starts_with($file, $root . DIRECTORY_SEPARATOR))
+        && is_file($file)) {
         $types = ['html' => 'text/html', 'js' => 'text/javascript', 'ico' => 'image/x-icon',
                   'png' => 'image/png', 'json' => 'application/json', 'webmanifest' => 'application/manifest+json'];
         $ext = pathinfo($file, PATHINFO_EXTENSION);

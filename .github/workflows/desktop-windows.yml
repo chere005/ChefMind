@@ -21,10 +21,14 @@ jobs:
       # export:web PLUS the head patch — ChefMind's export script is bare, the
       # patch is a separate step here exactly as deploy.sh runs it, and the
       # Windows bundle should carry the same index.html the site serves.
+      # TWO STEPS, not one `run:` block with two lines. The default shell on a
+      # windows runner is pwsh, which only fails the step on the LAST command's
+      # exit code — so a broken export would be masked by a head patch that
+      # then "succeeded" against a stale or absent dist.
       - name: Export the web app
-        run: |
-          npm run export:web
-          node tools/patch-web-html.mjs app/dist/index.html
+        run: npm run export:web
+      - name: Patch the exported head
+        run: node tools/patch-web-html.mjs app/dist/index.html
       - name: Build the Windows bundle
         uses: tauri-apps/tauri-action@v0
         with:
