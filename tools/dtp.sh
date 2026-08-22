@@ -15,7 +15,7 @@
 #      dtp is therefore safe and does not burn a number.
 #   3. ./deploy.sh --yes-prod       (the gates live in there; a failed deploy
 #                                    stops everything — never tag around one)
-#   4. tag vX.Y.0 (annotated)
+#   4. tag X.Y.0 (BARE — no v) (annotated)
 #   5. git push --follow-tags
 #   6. dispatch the desktop-windows workflow (CI builds the pushed tree);
 #      a dispatch failure is reported but does not un-ship the release
@@ -79,7 +79,7 @@ CUR=$(node -p "require('./package.json').version")
 printf '%s\n' "$CUR" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' \
   || { echo "package.json version '$CUR' is not x.y.z" >&2; exit 1; }
 
-if git rev-parse -q --verify "refs/tags/v$CUR" >/dev/null; then
+if git rev-parse -q --verify "refs/tags/$CUR" >/dev/null; then
   NEW=$(echo "$CUR" | awk -F. '{printf "%d.%d.0", $1, $2+1}')
   echo "==> version: $CUR (tagged) -> $NEW"
 else
@@ -89,10 +89,10 @@ else
   echo "==> version: $CUR is still untagged from an earlier run — reusing it"
 fi
 
-# A leftover v$NEW would make `git tag -a` fail AFTER the deploy has already
+# A leftover $NEW would make `git tag -a` fail AFTER the deploy has already
 # shipped. Checked HERE, while nothing has been touched yet.
-if git rev-parse -q --verify "refs/tags/v$NEW" >/dev/null; then
-  echo "refusing: the tag v$NEW already exists — nothing has shipped yet." >&2
+if git rev-parse -q --verify "refs/tags/$NEW" >/dev/null; then
+  echo "refusing: the tag $NEW already exists — nothing has shipped yet." >&2
   echo "  It is the residue of an interrupted lane: look at it, then delete it" >&2
   echo "  or move the version on." >&2
   exit 1
@@ -146,7 +146,7 @@ fi
 ./deploy.sh --yes-prod
 
 # --------------------------------------------------------------- tag, push, CI
-git tag -a "v$NEW" -m "ChefMind $NEW"
+git tag -a "$NEW" -m "ChefMind $NEW"
 # --atomic, because `git push --follow-tags` is per-ref: when origin/main has
 # moved under a long deploy, the TAG lands on the remote while main is
 # REJECTED — a published tag for a commit nobody can fetch. Both or neither.
@@ -155,13 +155,13 @@ git tag -a "v$NEW" -m "ChefMind $NEW"
 # then still untagged, so a re-run REUSES it — which is right, because the
 # deploy above already shipped exactly these bytes under that number.
 if ! git push --atomic --follow-tags origin main; then
-  git tag -d "v$NEW" >/dev/null
+  git tag -d "$NEW" >/dev/null
   echo "" >&2
   echo "THE DEPLOY SHIPPED, but the push was rejected — so nothing was tagged." >&2
   echo "  main has moved on the remote. Pull, then re-run: the lane reuses ${NEW}." >&2
   exit 1
 fi
-echo "==> pushed, tagged v$NEW"
+echo "==> pushed, tagged $NEW"
 
 if command -v gh >/dev/null 2>&1 && [ -f .github/workflows/desktop-windows.yml ]; then
   gh workflow run desktop-windows \
@@ -169,4 +169,4 @@ if command -v gh >/dev/null 2>&1 && [ -f .github/workflows/desktop-windows.yml ]
     || echo "   WARNING: desktop-windows dispatch failed — run it from the Actions tab" >&2
 fi
 
-echo "==> dtp done: v$NEW is live"
+echo "==> dtp done: $NEW is live"

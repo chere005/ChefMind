@@ -38,9 +38,10 @@ through lives THERE, not here.
   per device build, not per dtp — the web deploy is what the lane ships.
   A failed deploy stops the lane: nothing is tagged, nothing is pushed, and a
   re-run picks the still-untagged version up rather than burning a number.
-  Tags are bare `vx.y.0` now — the old `chefmind-` namespace existed because
-  two apps shared CalMind's repo, and this repo's own history carries the
-  retagged v1.0.0/v1.0.1/v1.1.0.
+  Tags are bare `x.y.0` — no `v`, matching every app in the suite (Sean,
+  2026-08-22). The old `chefmind-` namespace existed because two apps shared
+  CalMind's repo; this repo's history carries those releases retagged as
+  1.0.0/1.0.1/1.1.0, and CalMind no longer holds a `chefmind-` tag at all.
 - **Prod is the only instance.** Sean, 2026-08-21: straight to
   seancheren.com/ChefMind. So `deploy.sh`'s gates are not optional and there
   is no rehearsal to fall back on. The SSH login lives in `deploy.conf`
