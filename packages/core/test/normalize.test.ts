@@ -35,14 +35,23 @@ const note = (id: string, folderId: string, sectionId: string): Rec<'note'> => (
 });
 
 describe('normalize — ChefMind’s shape guarantees', () => {
-  it('an empty account grows three folders: Reminders, Recipes’ General, and the shopping list', () => {
+  it('an empty account grows TWO folders: Recipes’ General and the shopping list', () => {
     const { added } = normalize([]);
     const folders = added.filter((r): r is Rec<'folder'> => r.type === 'folder');
     expect(folders.map((f) => f.payload.name).sort())
-      .toEqual([FOLDER_NOTES_STARTER, FOLDER_SHOPPING, FOLDER_STARTER].sort());
+      .toEqual([FOLDER_NOTES_STARTER, FOLDER_SHOPPING].sort());
     expect(folders.find((f) => f.payload.name === FOLDER_SHOPPING)!.payload.shopping).toBe(true);
     expect(folders.find((f) => f.payload.name === FOLDER_NOTES_STARTER)!.payload.app).toBe('notes');
-    expect(added.filter((r) => r.type === 'section').length).toBe(3); // one General per folder
+    expect(added.filter((r) => r.type === 'section').length).toBe(2); // one General per folder
+  });
+
+  it('and NO folder named Reminders, on any path', () => {
+    // The whole point, and asserted by NAME rather than by count so it cannot
+    // pass because the shape changed elsewhere. Sean, 2026-08-22: it "should
+    // have been removed completely".
+    const { added } = normalize([]);
+    expect(added.filter((r) => r.type === 'folder').map((f) => (f as Rec<'folder'>).payload.name))
+      .not.toContain(FOLDER_STARTER);
   });
 
   it('seeds no calendar and no habit section — this app has neither', () => {
@@ -67,18 +76,64 @@ describe('normalize — ChefMind’s shape guarantees', () => {
    * folder IS the shopping list grows no general one — and the re-homing pass
    * then files every ordinary reminder onto the shopping list.
    */
-  it('a shopping list alone does not count as the reminders folder', () => {
+  it('a shopping list IS the reminders side — nothing general is grown beside it', () => {
+    // The inversion of what this file used to pin. Upstream a shopping list
+    // cannot stand in for the general folder, because CalMind has a Reminders
+    // tab whose rows would all be filed onto the shopping list. Here there is
+    // no such tab and no such rows: every reminder this app writes IS a
+    // shopping row, so the list is the right and only home.
     const { added } = normalize([shopFolder('sf'), section('ss', 'sf'), folder('nf', 'N', 'notes'), section('ns', 'nf')]);
-    const grown = added.filter((r): r is Rec<'folder'> => r.type === 'folder');
-    expect(grown.map((f) => f.payload.name)).toEqual([FOLDER_STARTER]);
-    expect(grown[0]!.payload.shopping).toBeUndefined();
+    expect(added.filter((r) => r.type === 'folder')).toEqual([]);
+  });
+
+  it('an account that already grew a Reminders folder has it folded away', () => {
+    // The migration, which is the half a fresh-account test cannot reach.
+    const recs: AnyRec[] = [
+      folder('old-rf', FOLDER_STARTER, 'reminders', 'A'), section('old-rs', 'old-rf'),
+      ...seed(),
+    ];
+    const { edited } = normalize(recs);
+    const gone = edited.find((r) => r.id === 'old-rf') as Rec<'folder'>;
+    expect(gone.deleted, 'the folder is tombstoned').toBe(true);
+    expect((edited.find((r) => r.id === 'old-rs') as Rec<'section'>).deleted,
+      'and its section with it').toBe(true);
+  });
+
+  it('…and its rows move to the shopping list rather than going with it', () => {
+    // NEVER lose a row. This is the only place in the suite that removes a
+    // container someone could have filed into, so what was inside has to land
+    // somewhere real.
+    const recs: AnyRec[] = [
+      folder('old-rf', FOLDER_STARTER, 'reminders', 'A'), section('old-rs', 'old-rf'),
+      ...seed(),
+      reminder('r1', 'old-rf', 'old-rs'),
+    ];
+    const { edited } = normalize(recs);
+    const moved = edited.find((r) => r.id === 'r1') as Rec<'reminder'>;
+    expect(moved.deleted, 'the row itself survives').toBeUndefined();
+    expect(moved.payload.folderId).toBe('seed-sf');
+    expect(moved.payload.sectionId).toBe('seed-ss');
   });
 
   it('a folder with no section gets its General', () => {
-    const { added } = normalize([folder('f1', 'Stuff'), ...seed()]);
+    // A NOTES folder: that is the only app in this build where a person can
+    // make one (the UI mounts FolderPick for 'notes' and nothing else), so it
+    // is the only place the guarantee can be exercised on a folder that
+    // survives the pass below.
+    const { added } = normalize([folder('f1', 'Stuff', 'notes'), ...seed()]);
     const sec = added.filter((r): r is Rec<'section'> => r.type === 'section' && r.payload.folderId === 'f1');
     expect(sec.length).toBe(1);
     expect(sec[0]!.payload.name).toBe(SECTION_DEFAULT);
+  });
+
+  it('a stray reminders folder is folded away rather than given a section', () => {
+    // The other half of the rule above, and the reason it had to move to a
+    // notes folder: no reminders folder but the shopping list survives here,
+    // so handing one a General section would be furnishing a room that is
+    // about to be demolished.
+    const { added, edited } = normalize([folder('f1', 'Stuff'), ...seed()]);
+    expect(added.filter((r): r is Rec<'section'> => r.type === 'section' && r.payload.folderId === 'f1')).toEqual([]);
+    expect((edited.find((r) => r.id === 'f1') as Rec<'folder'>).deleted).toBe(true);
   });
 
   it('a recipe pointing into a REMINDERS folder is pulled home to a notes folder', () => {
@@ -101,7 +156,7 @@ describe('normalize — ChefMind’s shape guarantees', () => {
   });
 
   it('a well-formed account is left completely alone', () => {
-    const { added, edited } = normalize([...seed(), reminder('r1', 'seed-rf', 'seed-rs'), note('n1', 'seed-nf', 'seed-ns')]);
+    const { added, edited } = normalize([...seed(), reminder('r1', 'seed-sf', 'seed-ss'), note('n1', 'seed-nf', 'seed-ns')]);
     expect(added.length + edited.length).toBe(0);
   });
 });
@@ -109,7 +164,6 @@ describe('normalize — ChefMind’s shape guarantees', () => {
 /** The starters, so a test can focus on one guarantee at a time. */
 function seed(): AnyRec[] {
   return [
-    folder('seed-rf', FOLDER_STARTER, 'reminders', 'A'), section('seed-rs', 'seed-rf'),
     folder('seed-nf', FOLDER_NOTES_STARTER, 'notes', 'B'), section('seed-ns', 'seed-nf'),
     shopFolder('seed-sf', 'C'), section('seed-ss', 'seed-sf'),
   ];

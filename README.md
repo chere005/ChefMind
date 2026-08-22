@@ -46,7 +46,7 @@ Three tabs: **Recipes · ⊕ · Shopping**.
 | `QuickTick`, `watch.ts`, the watch/widget targets | no watch, no widgets |
 | `subs.ts` | calendar subscriptions belong to the calendar |
 | the Event card on Add | an event is a calendar thing |
-| `Reminders`, and the Reminder card with it | Sean, 2026-08-21: "remove reminders from ChefMind" — a general list is CalMind's job. The `reminder` RECORD stays: the shopping rows are reminder records, and Search finds them under **Shopping** |
+| `Reminders`, the Reminder card, and the general reminders FOLDER | Sean, 2026-08-21: "remove reminders from ChefMind" — a general list is CalMind's job. The screen went then; the seeded folder named *Reminders* survived until 2026-08-22 ("that should have been removed completely") because the shape pass needed somewhere to file a stray reminder. The shopping list is that somewhere now, and an account that already grew the folder has it folded in — rows first, then the folder. The `reminder` RECORD stays: the shopping rows are reminder records, and Search finds them under **Shopping** |
 | the repeat pill on Add | what is left there makes a recipe, and a recipe does not recur |
 | the time field on Add | a time belongs to a reminder |
 | core's calendar and habit STARTERS | records that would sync forever and never be drawn |

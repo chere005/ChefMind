@@ -9,6 +9,15 @@ import type { AnyRec, Rec } from './types';
 import { folderApp, newId } from './types';
 import { ordBetween, byRecOrd } from './order';
 
+/**
+ * NOT SEEDED ANY MORE — recognised, so an account that already grew one can be
+ * folded into the shopping list. Sean, 2026-08-22: "i still see reminders on
+ * chefmind, that should have been removed completely." It was still here
+ * because the rehome pass below needs somewhere to put a stray reminder, and
+ * this was that somewhere. In THIS app every reminder is a shopping row, so
+ * the shopping list is the right home and a second container was only ever a
+ * place for the word "Reminders" to survive.
+ */
 export const FOLDER_STARTER = 'Reminders';
 export const FOLDER_CALENDAR = 'Calendar'; // seeded WITH rideAlong — the name is a label, the flag is the identity
 export const FOLDER_NOTES_STARTER = 'General';
@@ -17,9 +26,10 @@ export const SECTION_DEFAULT = 'General';
 export const CALENDAR_STARTER = 'Personal';
 export const HABIT_SECTION_STARTER = 'Habits';
 
-// Seed colours, as in lib/palette.php: reminders' vivid blue and notes' sky.
-// CalMind's calendar and habit colours are gone with the tabs that used them.
-const C_REMINDERS = '#4c8bf0';
+// Seed colours, as in lib/palette.php. Notes' sky is the only one left that
+// this app seeds: CalMind's calendar and habit colours went with the tabs that
+// used them, and reminders' vivid blue went with the general folder — the
+// shopping list wears the gold below.
 const C_NOTES = '#7dc2ed';
 // The shopping list's own colour — the palette's gold, which is also the tile
 // this app wears, so the tab and the folder read as the same thing.
@@ -72,9 +82,10 @@ export function normalize(recs: AnyRec[]): { added: AnyRec[]; edited: AnyRec[] }
    */
   const appFolders = (app: 'reminders' | 'notes') =>
     folders.filter((f) => folderApp(f.payload) === app && !f.payload.shopping).sort(byRecOrd);
-  if (appFolders('reminders').length === 0) {
-    folder(FOLDER_STARTER, C_REMINDERS, 'reminders');
-  }
+  // NO general reminders folder. CalMind seeds one because it has a Reminders
+  // tab; this app has Recipes and Shopping, and its only reminder records ARE
+  // the shopping rows — so the shopping list below is the whole of the
+  // reminders side, and `reminderHome` is what the rehome pass aims at.
   if (appFolders('notes').length === 0) {
     folder(FOLDER_NOTES_STARTER, C_NOTES, 'notes');
   }
@@ -85,11 +96,38 @@ export function normalize(recs: AnyRec[]): { added: AnyRec[]; edited: AnyRec[] }
     const last = appFolders('reminders').slice(-1)[0];
     folder(FOLDER_SHOPPING, C_SHOPPING, 'reminders', false, last?.payload.ord, true);
   }
+  // The one reminders container this app has. Non-null by construction: the
+  // block above just made it if it was missing, and `folder()` pushes into
+  // `folders`. The rehome pass used to assert on appFolders('reminders')[0]
+  // instead, which is exactly the assertion that would now be empty.
+  const shoppingHome = () => folders.filter((f) => f.payload.shopping).sort(byRecOrd)[0]!;
+
+  /**
+   * FOLD ANY GENERAL REMINDERS FOLDER INTO THE SHOPPING LIST.
+   *
+   * Accounts made before this change carry the seeded "Reminders" folder, and
+   * deleting it outright would take its rows with it. So its reminders move
+   * first — the rehome pass below does that once the folder is gone — and then
+   * the folder and its sections are tombstoned.
+   *
+   * Data, not cosmetics: this is the only place in the suite that removes a
+   * container a person could have filed something into. It runs against
+   * ChefMind's OWN store (space 'chef', records-chef-<user>.json), never
+   * CalMind's, whose Reminders tab and folders are untouched by any of this.
+   */
+  for (const f of appFolders('reminders')) {
+    f.deleted = true;
+    edited.push(f);
+    for (const s of sections.filter((x) => x.payload.folderId === f.id)) {
+      s.deleted = true;
+      edited.push(s);
+    }
+  }
 
   // Every folder keeps at least one section, so nothing can land loose.
   const secsOf = (fid: string) =>
-    sections.filter((s) => s.payload.folderId === fid).sort(byRecOrd);
-  for (const f of folders) {
+    sections.filter((s) => live(s) && s.payload.folderId === fid).sort(byRecOrd);
+  for (const f of folders.filter(live)) {
     if (secsOf(f.id).length === 0) {
       sections.push(
         put({ id: newId(), type: 'section', updated: 0, payload: { name: SECTION_DEFAULT, folderId: f.id, ord: ordBetween(null, null) } }) as Rec<'section'>,
@@ -98,12 +136,16 @@ export function normalize(recs: AnyRec[]): { added: AnyRec[]; edited: AnyRec[] }
   }
 
   // Re-home strays into their own app's containers. Ids make this cheap.
-  const secById = new Map(sections.map((s) => [s.id, s]));
-  const folderById = new Map(folders.map((f) => [f.id, f]));
+  const secById = new Map(sections.filter(live).map((s) => [s.id, s]));
+  const folderById = new Map(folders.filter(live).map((f) => [f.id, f]));
   const rehome = (r: Rec<'reminder'> | Rec<'note'>, app: 'reminders' | 'notes') => {
     let { folderId, sectionId } = r.payload;
     const f = folderById.get(folderId);
-    if (!f || folderApp(f.payload) !== app) folderId = appFolders(app)[0]!.id;
+    // A reminder whose folder just went away lands on the shopping list — the
+    // only reminders container this app has.
+    if (!f || folderApp(f.payload) !== app) {
+      folderId = app === 'reminders' ? shoppingHome().id : appFolders(app)[0]!.id;
+    }
     const sec = secById.get(sectionId);
     if (!sec || sec.payload.folderId !== folderId) sectionId = secsOf(folderId)[0]!.id;
     if (folderId !== r.payload.folderId || sectionId !== r.payload.sectionId) {
