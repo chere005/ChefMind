@@ -55,6 +55,54 @@ through lives THERE, not here.
   local runs.
 - **`main` is the branch.** Stage explicit paths — never `git add -A`.
 
+## Development
+
+- **Tests**: `npm run test` (→ `npm run test:core`) runs `packages/core`'s
+  suite with `--run` (no watch mode). `spec/` carries the behaviour contract
+  copied down from CalMind so core's suite runs against it here too.
+- **Types**: `npm run typecheck` runs `tsc --noEmit` over `packages/core` and
+  `app` — the two workspaces that are clones, not the desktop shell.
+- **Workspaces**: an npm workspaces monorepo — `packages/*`, `app`, `desktop`.
+
+## Platforms — what ships where, and how
+
+- **Web** is the only thing `deploy.sh` ships: the PWA frontend, to
+  `seancheren.com/ChefMind` (`/home/public/ChefMind` and nothing else — see
+  "Prod is the only instance" above). That frontend has **no server of its
+  own** — every sync goes out to CalMind's live API in the `chef` sync space,
+  and `deploy.sh`'s server-suite gate refuses to ship unless that live API
+  reports the `chef` space. Nothing here implies a ChefMind backend; there
+  isn't one.
+- **macOS**: the Tauri desktop bundle in `desktop/`. `dmg` packaging is
+  excluded from `bundle.targets` (see traps below) — the `.app` bundle is
+  the shipped artifact.
+- **Windows**: `.msi`/`.exe`, built and smoke-tested in CI only
+  (`.github/workflows/desktop-windows.yml`, dispatched after a dtp push) —
+  Tauri does not cross-compile, so this repo's own deploy never produces it.
+- **iOS**: builds and installs to the physical phone via CoreMind's shared
+  `bin/build-platforms.sh --ios` (devicectl) — one of the phone's 3 free-tier
+  device slots. Reinstalled 2026-08-22 after MyCalMind was freed from the
+  phone to make room.
+- **watchOS**: no target. `watch.ts` and the watch/widget targets were taken
+  out along with Calendar and Habits (see README's "What was taken out") —
+  there is nothing to install to a paired watch.
+- **Android**: builds, installs, and launches on a local emulator via
+  CoreMind's shared `bin/build-platforms.sh --android`. Confirmed working
+  2026-08-22.
+
+macOS, Windows, iOS, and Android are not built by anything in this repo's own
+`dtp`/`tdtp` — they come from CoreMind's table-driven, shared
+`bin/build-platforms.sh <App> [--mac] [--ios] [--android]`, normally run as
+part of `sh bin/dtp.sh all --full --platforms` from CoreMind, which runs
+every app's tdtp lane in dependency order (core first, then CalMind, then
+this repo — ChefMind's deploy depends on CalMind's live API being up) and
+then builds whatever platforms each app's own deploy doesn't ship by itself.
+Two rules apply on this machine regardless of which repo you're in: never run
+two heavy build/device processes concurrently (proven twice to cause real
+failures), and remember the phone's hard cap of 3 installed apps at a time
+(currently CalMind, ChefMind, AcctMind — MyCalMind is deliberately not one of
+them, to stay under that cap).
+
 ## Traps that have cost real time here
 
 - **`space` reaches a filename.** It is whitelisted in `sync_space()` (in
