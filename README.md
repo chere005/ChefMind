@@ -1,13 +1,21 @@
 # ChefMind
 
 CalMind's recipes, with a shopping list, syncing through the same
-server on the same account. A CLONE of `apps/app` and `packages/core`, not a
-rewrite — see `CLAUDE.md` for the rules that keeps it under.
+server on the same account. A CLONE of CalMind's `apps/app` and
+`packages/core`, not a rewrite — see `AGENTS.md` for the rules that keep it
+one. Its own repo since 2026-08-22, extracted from
+[chere005/CalMind](https://github.com/chere005/CalMind) with its history.
+
+**Platforms:** the web app at
+[seancheren.com/ChefMind](https://seancheren.com/ChefMind) (an installable
+PWA — production is the only instance), iOS and Android via Expo, a macOS
+desktop shell (Tauri), and Windows `.msi`/`.exe` built by CI.
 
 ```
-app/            The Expo app, cloned from apps/app.
+app/            The Expo app, cloned from CalMind's apps/app.
 packages/core/  The brain, cloned — plus shopping.ts, which has no twin.
-tools/          The web export's head patch and service worker.
+tools/          The web export's head patch, service worker, the deploy-guard
+                prover, and the dtp/tdtp release lanes.
 deploy.sh       The one deploy: the web client, to production.
 spec/           The behaviour contract, copied so core's suite runs here.
 ```
@@ -70,20 +78,29 @@ found weeks later, by a reminders list with recipes in it.
 ```
 npm install
 npm run export:web && node tools/patch-web-html.mjs app/dist/index.html
-CALMIND_DATA_DIR=/tmp/chefmind-dev-data php -S 127.0.0.1:8792 ChefMind/e2e-router.php
+CALMIND_DATA_DIR=/tmp/chefmind-dev-data php -S 127.0.0.1:8792 e2e-router.php
 ```
 
 …then http://127.0.0.1:8792/ChefMind/. The router serves this app at /ChefMind
 and CalMind's API at /calmind/api, which is the arrangement production has —
-one origin, two paths.
+one origin, two paths. The API itself lives in the CalMind repo: the router
+assumes a sibling checkout at `../CalMind` (`CALMIND_REPO` overrides it).
 
 ## Deploying
 
 ```
-./ChefMind/deploy.sh --dry-run     # preview
-./ChefMind/deploy.sh --yes-prod    # do it
-./ChefMind/deploy.sh --verify      # check what is live
+./deploy.sh --dry-run     # preview
+./deploy.sh --yes-prod    # do it
+./deploy.sh --verify      # check what is live
 ```
 
 It writes `/home/public/ChefMind` and nothing else. There is no test instance:
 Sean asked for it straight at production, so the gates are the whole rehearsal.
+The SSH login lives in `deploy.conf` (gitignored — see `deploy.conf.sample`).
+
+A release is one gesture:
+
+```
+npm run dtp      # deploy, tag, push — bumps the minor version
+npm run tdtp     # the same lane with the full test run in front
+```

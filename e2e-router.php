@@ -9,20 +9,32 @@
  * on the same origin — so a router that only knew one prefix would be testing
  * an arrangement the deployed app does not have.
  *
- *   CALMIND_DATA_DIR=/tmp/scratch php -S 127.0.0.1:8792 ChefMind/e2e-router.php
+ * The API lives in the CalMind repo, not this one. A sibling checkout is
+ * assumed at ../CalMind; CALMIND_REPO overrides it. No checkout means the
+ * /calmind/api half 404s with a message that says why, rather than a blank
+ * not-found that reads like a routing bug.
+ *
+ *   CALMIND_DATA_DIR=/tmp/scratch php -S 127.0.0.1:8792 e2e-router.php
  */
 
 $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-$root = dirname(__DIR__);
+$repo = __DIR__;
+$calmind = getenv('CALMIND_REPO') ?: dirname(__DIR__) . '/CalMind';
 
 if (preg_match('#^/calmind/api/#', $uri)) {
-    require $root . '/server/public/api/index.php';
+    $api = $calmind . '/server/public/api/index.php';
+    if (!is_file($api)) {
+        http_response_code(404);
+        echo "no CalMind checkout at $calmind — set CALMIND_REPO";
+        return true;
+    }
+    require $api;
     return true;
 }
 if (str_starts_with($uri, '/ChefMind')) {
     $rel = substr($uri, strlen('/ChefMind'));
     if ($rel === '' || $rel === '/') { $rel = '/index.html'; }
-    $file = $root . '/ChefMind/app/dist' . $rel;
+    $file = $repo . '/app/dist' . $rel;
     if (is_file($file)) {
         $types = ['html' => 'text/html', 'js' => 'text/javascript', 'ico' => 'image/x-icon',
                   'png' => 'image/png', 'json' => 'application/json', 'webmanifest' => 'application/manifest+json'];

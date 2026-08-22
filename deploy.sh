@@ -1,28 +1,27 @@
 #!/bin/sh
 # Deploy ChefMind — the web client, to production, and nothing else.
 #
-#   ./ChefMind/deploy.sh --dry-run          preview every transfer
-#   ./ChefMind/deploy.sh --yes-prod         do it
-#   ./ChefMind/deploy.sh --verify           check what is already live
+#   ./deploy.sh --dry-run          preview every transfer
+#   ./deploy.sh --yes-prod         do it
+#   ./deploy.sh --verify           check what is already live
 #
-# WHY A SEPARATE SCRIPT rather than a target in server/deploy.sh. That script
-# ships an API and a web client to one of three CalMind instances, and every
-# path it can write is in its own table. ChefMind writes ONE directory, has no
-# API of its own, and its destination is the production document root — so it
-# gets deploy-prod.sh's treatment: constant destinations, a spelled-out flag,
-# and no bare form. A script that cannot be aimed cannot be misaimed.
+# THE SHAPE OF THIS SCRIPT is deploy-prod.sh's (CalMind's): ChefMind writes
+# ONE directory, has no API of its own, and its destination is the production
+# document root — so it gets constant destinations, a spelled-out flag, and no
+# bare form. A script that cannot be aimed cannot be misaimed.
 #
 # There is no test instance. Sean, 2026-08-21: "this will be deployed straight
 # away to seancheren.com/ChefMind". The gates below are therefore the whole of
 # the rehearsal, which is why they are not optional.
 #
-# The host lives in server/deploy.conf (gitignored), shared with CalMind's.
+# The host lives in deploy.conf (gitignored) at the repo root — see
+# deploy.conf.sample.
 set -e
 # Resolved BEFORE the cd, because the re-entrant --verify call below needs a
 # path that is still correct from the repo root — $0 as given is relative to
 # wherever this was invoked from.
 SELF=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")"
 
 DRY=""; GO=0; VERIFY_ONLY=0
 for a in "$@"; do
@@ -96,7 +95,7 @@ sys.exit(0 if '$SPACE' in (d.get('spaces') or []) else 1)
     echo "" >&2
     echo "ChefMind sends space='$SPACE' on every sync. An API that does not know it" >&2
     echo "ignores the parameter and writes ChefMind's records into CalMind's store." >&2
-    echo "Deploy the API first:  ./server/deploy.sh prod --yes-prod" >&2
+    echo "Deploy the API first, from the CalMind repo:  ./server/deploy.sh prod --yes-prod" >&2
     exit 1
   fi
   echo "    it does."
@@ -136,7 +135,7 @@ check_api
 
 echo "==> typecheck"
 TSLOG=$(mktemp)
-for P in ChefMind/packages/core ChefMind/app; do
+for P in packages/core app; do
   if ! npx tsc --noEmit -p "$P" >"$TSLOG" 2>&1; then
     cat "$TSLOG" >&2; rm -f "$TSLOG"
     echo "$P typecheck failed — not deploying" >&2; exit 1
@@ -145,61 +144,69 @@ done
 rm -f "$TSLOG"
 
 echo "==> core tests"
-( cd ChefMind && npm run test:core --silent >/dev/null 2>&1 ) \
+npm run test:core --silent >/dev/null 2>&1 \
   || { echo "core tests failed — not deploying" >&2; exit 1; }
 
 # The API is CalMind's, so ITS suite is the one that gates the behaviour this
-# client depends on — the sync space above all. Running it here means ChefMind
-# cannot ship against a server whose own tests are red.
-echo "==> server tests (the API this client talks to is CalMind's)"
-php server/tools/test.php >/dev/null \
-  || { echo "server tests failed — not deploying" >&2; exit 1; }
+# client depends on — the sync space above all. That server lives in the
+# CalMind repo, not this one; when a checkout is present its suite runs and
+# gates the deploy. When it is not, this says so OUT LOUD rather than skipping
+# silently — the live API gate above is then the only server check.
+CALMIND_REPO="${CALMIND_REPO:-$HOME/GIT/CalMind}"
+if [ -f "$CALMIND_REPO/server/tools/test.php" ]; then
+  echo "==> server tests (the API this client talks to is CalMind's, at $CALMIND_REPO)"
+  php "$CALMIND_REPO/server/tools/test.php" >/dev/null \
+    || { echo "CalMind's server tests failed — not deploying" >&2; exit 1; }
+else
+  echo "==> server tests SKIPPED — no CalMind checkout at $CALMIND_REPO;"
+  echo "    the API gate above is the only server check this run has"
+fi
 
 echo "==> web export"
-( cd ChefMind && npm run export:web >/dev/null ) \
+npm run export:web >/dev/null \
   || { echo "the export failed — not deploying" >&2; exit 1; }
-node ChefMind/tools/patch-web-html.mjs ChefMind/app/dist/index.html
+node tools/patch-web-html.mjs app/dist/index.html
 
-[ -f ChefMind/app/dist/index.html ] || { echo "the export produced no dist/index.html — not deploying" >&2; exit 1; }
+[ -f app/dist/index.html ] || { echo "the export produced no dist/index.html — not deploying" >&2; exit 1; }
 # Read the bundle out of index.html rather than globbing: dist holds more than
 # one index-*.js (the entry bundle and an async chunk) and `find | head -1`
 # picks between them arbitrarily.
-BUNDLE=$(grep -o 'index-[a-zA-Z0-9]*\.js' ChefMind/app/dist/index.html | head -1)
+BUNDLE=$(grep -o 'index-[a-zA-Z0-9]*\.js' app/dist/index.html | head -1)
 [ -n "$BUNDLE" ] || { echo "dist/index.html names no bundle — not deploying" >&2; exit 1; }
 echo "    bundle: $BUNDLE"
 
 # The client must be the one that sends the space. A build that lost the line
 # would pass every check above and still merge two stores.
-grep -q "space" ChefMind/app/src/api.ts || { echo "api.ts no longer sends a space — not deploying" >&2; exit 1; }
-if ! grep -q "\"$SPACE\"\|'$SPACE'" "ChefMind/app/dist/_expo/static/js/web/$BUNDLE"; then
+grep -q "space" app/src/api.ts || { echo "api.ts no longer sends a space — not deploying" >&2; exit 1; }
+if ! grep -q "\"$SPACE\"\|'$SPACE'" "app/dist/_expo/static/js/web/$BUNDLE"; then
   echo "the exported bundle does not contain the space string — not deploying" >&2
   exit 1
 fi
 echo "    the bundle carries space='$SPACE'"
 
-[ -f server/deploy.conf ] || { echo "server/deploy.conf missing (SSH_DEST=...)" >&2; exit 1; }
-. ./server/deploy.conf
-[ -n "$SSH_DEST" ] || { echo "SSH_DEST not set in server/deploy.conf" >&2; exit 1; }
+[ -f deploy.conf ] || { echo "deploy.conf missing (SSH_DEST=...)" >&2; exit 1; }
+. ./deploy.conf
+[ -n "$SSH_DEST" ] || { echo "SSH_DEST not set in deploy.conf" >&2; exit 1; }
 
 echo "==> icons"
 # iOS reads apple-touch-icon, which expo does not emit; the manifest names the
 # other two.
-sips -z 180 180 ChefMind/app/assets/icon.png --out ChefMind/app/dist/apple-touch-icon.png >/dev/null 2>&1
-sips -z 192 192 ChefMind/app/assets/icon.png --out ChefMind/app/dist/icon-192.png >/dev/null 2>&1
-sips -z 512 512 ChefMind/app/assets/icon.png --out ChefMind/app/dist/icon-512.png >/dev/null 2>&1
-perl -i -pe "s|<link rel=\"apple-touch-icon\"[^>]*/?>||g" ChefMind/app/dist/index.html
-perl -i -pe "s|</head>|<link rel=\"apple-touch-icon\" href=\"/ChefMind/apple-touch-icon.png\"/></head>|" ChefMind/app/dist/index.html
-ICOV=$(shasum ChefMind/app/dist/favicon.ico | cut -c1-8)
-perl -i -pe "s|favicon\.ico(\?v=[0-9a-f]*)?|favicon.ico?v=$ICOV|" ChefMind/app/dist/index.html
+sips -z 180 180 app/assets/icon.png --out app/dist/apple-touch-icon.png >/dev/null 2>&1
+sips -z 192 192 app/assets/icon.png --out app/dist/icon-192.png >/dev/null 2>&1
+sips -z 512 512 app/assets/icon.png --out app/dist/icon-512.png >/dev/null 2>&1
+perl -i -pe "s|<link rel=\"apple-touch-icon\"[^>]*/?>||g" app/dist/index.html
+perl -i -pe "s|</head>|<link rel=\"apple-touch-icon\" href=\"/ChefMind/apple-touch-icon.png\"/></head>|" app/dist/index.html
+ICOV=$(shasum app/dist/favicon.ico | cut -c1-8)
+perl -i -pe "s|favicon\.ico(\?v=[0-9a-f]*)?|favicon.ico?v=$ICOV|" app/dist/index.html
 
 echo "==> web client -> $WEB_DEST/"
 # No --delete, ever. .sources.json is this machine's record of what the export
 # was built from and has no business being served.
-rsync -avL $DRY --exclude '.sources.json' ChefMind/app/dist/ "$SSH_DEST:$WEB_DEST/"
+rsync -avL $DRY --exclude '.sources.json' app/dist/ "$SSH_DEST:$WEB_DEST/"
 # index.html must revalidate; the hashed bundles cache forever. CalMind's
 # htaccess, because the rule is about the shape of the files and both apps
 # have the same shape.
-rsync -avL $DRY server/public/web.htaccess "$SSH_DEST:$WEB_DEST/.htaccess"
+rsync -avL $DRY tools/web.htaccess "$SSH_DEST:$WEB_DEST/.htaccess"
 
 if [ -z "$DRY" ]; then
   echo "==> proving the served page"

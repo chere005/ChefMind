@@ -18,28 +18,34 @@
  * reaches for that convention when minting a RECORD, this fails.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { newId, tickId, prefsId } from '../src/types';
 
+/** Where CalMind's server lives. ChefMind has no server of its own — it talks
+ * to CalMind's, which since the 2026-08-22 extraction is a SIBLING repo, not
+ * this one. Resolved from THIS FILE (vitest's cwd differs between a `--root
+ * packages/core` run and one from the repo root): four levels up is the
+ * directory the two checkouts share. CALMIND_REPO overrides, matching
+ * deploy.sh and e2e-router.php. */
+const calmindAppPhp = process.env.CALMIND_REPO
+  ? `${process.env.CALMIND_REPO}/server/lib/app.php`
+  : fileURLToPath(new URL('../../../../CalMind/server/lib/app.php', import.meta.url));
+const haveServer = existsSync(calmindAppPhp);
+
 /** The server's rule, taken from the server. */
 function serverIdPattern(): RegExp {
-  // Resolved from THIS FILE: vitest's cwd differs between a `--root
-  // packages/core` run and one from the repo root, and a path that works only
-  // one way is a check that silently stops running.
-  // FOUR levels up, not three: ChefMind is its own workspace inside the CalMind
-  // repo and has no server of its own — it talks to CalMind's, which is the
-  // whole point of reusing the logins. So the file this reads is the one that
-  // actually serves this app.
-  const appPhp = fileURLToPath(new URL('../../../../server/lib/app.php', import.meta.url));
-  const php = readFileSync(appPhp, 'utf8');
+  const php = readFileSync(calmindAppPhp, 'utf8');
   const m = /const\s+REC_ID_RE\s*=\s*'\/(.+?)\/'/.exec(php);
   if (!m) throw new Error('REC_ID_RE not found in app.php — this check is not running');
   return new RegExp(m[1]!);
 }
 
-describe('ids core mints are ids the server will take', () => {
-  const re = serverIdPattern();
+// Skipped — VISIBLY, never silently green — on a machine with no CalMind
+// checkout. The deploy gate runs this suite on the machine that ships, where
+// the checkout exists, so the protocol check still guards every deploy.
+describe.skipIf(!haveServer)('ids core mints are ids the server will take', () => {
+  const re = haveServer ? serverIdPattern() : /never-run/;
 
   it('the pattern really was read from app.php', () => {
     // Guards the guard: a regex that matched everything would make every

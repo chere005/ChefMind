@@ -12,8 +12,15 @@
     "web": "npm -w chefmind-app run web",
     "export:web": "npm -w chefmind-app exec expo export -- -p web",
     "desktop": "npm -w @chefmind/desktop run build",
-    "desktop:dev": "npm -w @chefmind/desktop run dev"
+    "desktop:dev": "npm -w @chefmind/desktop run dev",
+    "typecheck": "npx tsc --noEmit -p packages/core && npx tsc --noEmit -p app",
+    "deploy": "sh deploy.sh",
+    "dtp": "sh tools/dtp.sh",
+    "tdtp": "sh tools/tdtp.sh",
+    "test:deploy": "sh tools/check-deploy-guards.sh"
   },
-  "devDependencies": {},
+  "devDependencies": {
+    "typescript": "~6.0.3"
+  },
   "version": "1.1.0"
 }
