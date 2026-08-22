@@ -18,36 +18,32 @@
  * reaches for that convention when minting a RECORD, this fails.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { newId, tickId, prefsId } from '../src/types';
 
-/** Where CalMind's server lives. ChefMind has no server of its own — it talks
- * to CalMind's, which since the 2026-08-22 extraction is a SIBLING repo, not
- * this one. Resolved from THIS FILE (vitest's cwd differs between a `--root
- * packages/core` run and one from the repo root): four levels up is the
- * directory the two checkouts share. CALMIND_REPO overrides, matching
- * deploy.sh and e2e-router.php. */
-const calmindAppPhp = process.env.CALMIND_REPO
-  ? `${process.env.CALMIND_REPO}/server/lib/app.php`
-  : fileURLToPath(new URL('../../../../CalMind/server/lib/app.php', import.meta.url));
-const haveServer = existsSync(calmindAppPhp);
+/**
+ * The rule, taken from the CONTRACT — spec/protocol.json, which CoreMind holds
+ * canonically and this repo carries beside CalMind's copy.
+ *
+ * This file used to read the pattern out of CalMind's server/lib/app.php,
+ * across the filesystem, and skipped itself entirely when no sibling checkout
+ * existed — so on a fresh clone the check that keeps ids acceptable to the
+ * server simply did not run. The contract removed the reach: the server is
+ * held to the same file, in CalMind, by CalMind's own copy of this test.
+ *
+ * Resolved from THIS FILE: vitest's cwd differs between a `--root
+ * packages/core` run and one from the repo root, and a path that works only
+ * one way is a check that silently stops running.
+ */
+const spec = JSON.parse(
+  readFileSync(fileURLToPath(new URL('../../../spec/protocol.json', import.meta.url)), 'utf8'),
+) as { recIdPattern: string; maxBatch: number };
 
-/** The server's rule, taken from the server. */
-function serverIdPattern(): RegExp {
-  const php = readFileSync(calmindAppPhp, 'utf8');
-  const m = /const\s+REC_ID_RE\s*=\s*'\/(.+?)\/'/.exec(php);
-  if (!m) throw new Error('REC_ID_RE not found in app.php — this check is not running');
-  return new RegExp(m[1]!);
-}
+describe('ids core mints are ids the server will take', () => {
+  const re = new RegExp(spec.recIdPattern);
 
-// Skipped — VISIBLY, never silently green — on a machine with no CalMind
-// checkout. The deploy gate runs this suite on the machine that ships, where
-// the checkout exists, so the protocol check still guards every deploy.
-describe.skipIf(!haveServer)('ids core mints are ids the server will take', () => {
-  const re = haveServer ? serverIdPattern() : /never-run/;
-
-  it('the pattern really was read from app.php', () => {
+  it('the pattern really was read from the contract', () => {
     // Guards the guard: a regex that matched everything would make every
     // assertion below vacuous.
     expect(re.test('a b c'), 'the pattern should reject a space').toBe(false);

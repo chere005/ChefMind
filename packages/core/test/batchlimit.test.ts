@@ -21,7 +21,7 @@
  * two are the same number and the last test here reads app.php and says so.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { SyncEngine, SYNC_MAX_BATCH } from '../src/sync';
 import type { AnyRec, Rec, SyncRequest, SyncResponse } from '../src/index';
@@ -87,20 +87,15 @@ describe('a backlog larger than the server will take', () => {
     expect(eng.hasPending(), 'and the refused work is still owed').toBe(true);
   });
 
-  // The server is CalMind's, a SIBLING repo since the 2026-08-22 extraction.
-  // Resolved from THIS FILE, not the working directory — vitest's cwd differs
-  // between `--root packages/core` and a run from the repo root, and a path
-  // that only works one way is a check that stops running. CALMIND_REPO
-  // overrides, matching deploy.sh. Skipped — VISIBLY, never silently green —
-  // where no checkout exists; the deploy gate runs on the machine that ships,
-  // which has one, so the protocol check still guards every deploy.
-  const appPhp = process.env.CALMIND_REPO
-    ? `${process.env.CALMIND_REPO}/server/lib/app.php`
-    : fileURLToPath(new URL('../../../../CalMind/server/lib/app.php', import.meta.url));
-  it.skipIf(!existsSync(appPhp))("matches the server's MAX_BATCH, which is why it may be duplicated", () => {
-    const php = readFileSync(appPhp, 'utf8');
-    const m = /const\s+MAX_BATCH\s*=\s*(\d+)/.exec(php);
-    expect(m, 'MAX_BATCH not found in app.php — this check is not running').not.toBeNull();
-    expect(Number(m![1]), 'core and the server disagree about the batch limit').toBe(SYNC_MAX_BATCH);
+  // The batch limit is a CONTRACT term — spec/protocol.json, which CoreMind
+  // holds canonically. This used to be read out of CalMind's app.php through a
+  // sibling checkout, and skipped when there was not one; the server is held
+  // to the same file, in CalMind, by CalMind's own copy of this test.
+  const spec = JSON.parse(
+    readFileSync(fileURLToPath(new URL('../../../spec/protocol.json', import.meta.url)), 'utf8'),
+  ) as { maxBatch: number };
+
+  it('matches the contract, which is why a full batch may be duplicated', () => {
+    expect(spec.maxBatch, 'core and the contract disagree about the batch limit').toBe(SYNC_MAX_BATCH);
   });
 });
