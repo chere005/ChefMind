@@ -37,7 +37,11 @@ through lives THERE, not here.
   (version), `package.json`, `desktop/package.json`,
   `desktop/src-tauri/tauri.conf.json` and `desktop/src-tauri/Cargo.toml`
   (Cargo.lock follows). `ios.buildNumber`/`android.versionCode` move by hand
-  per device build, not per dtp — the web deploy is what the lane ships.
+  per device build, not per dtp. **The lane ships every platform this repo
+  has** — the web deploy, then the macOS bundle before the tag, then iOS and
+  Android after the push (`tools/build-platforms.sh`). Naming a platform
+  selects only it; naming none means all of them; `--web` is how you say "the
+  release and no platform builds".
   A failed deploy stops the lane: nothing is tagged, nothing is pushed, and a
   re-run picks the still-untagged version up rather than burning a number.
   Tags are bare `x.y.0` — no `v`, matching every app in the suite (Sean,
@@ -138,26 +142,38 @@ through lives THERE, not here.
   the shipped artifact.
 - **Windows**: `.msi`/`.exe`, built and smoke-tested in CI only
   (`.github/workflows/desktop-windows.yml`, dispatched after a dtp push) —
-  Tauri does not cross-compile, so this repo's own deploy never produces it.
-- **iOS**: builds and installs to the physical phone via CoreMind's shared
-  `bin/build-platforms.sh --ios` (devicectl) — one of the phone's 3 free-tier
+  Tauri does not cross-compile, so it is the ONE platform this repo cannot
+  produce for itself.
+- **iOS**: builds and installs to the physical phone via this repo's
+  `tools/build-platforms.sh --ios` (devicectl) — one of the phone's 3 free-tier
   device slots. Reinstalled 2026-08-22 after MyCalMind was freed from the
   phone to make room.
 - **watchOS**: no target. `watch.ts` and the watch/widget targets were taken
   out along with Calendar and Habits (see README's "What was taken out") —
   there is nothing to install to a paired watch.
-- **Android**: builds, installs, and launches on a local emulator via
-  CoreMind's shared `bin/build-platforms.sh --android`. Confirmed working
+- **Android**: builds, installs, and launches on a local emulator via this
+  repo's `tools/build-platforms.sh --android`. Confirmed working
   2026-08-22.
 
-macOS, Windows, iOS, and Android are not built by anything in this repo's own
-`dtp`/`tdtp` — they come from CoreMind's table-driven, shared
-`bin/build-platforms.sh <App> [--mac] [--ios] [--android]`, normally run as
-part of `sh bin/dtp.sh all --full --platforms` from CoreMind, which runs
-every app's tdtp lane in dependency order (core first, then CalMind, then
-this repo — ChefMind's deploy depends on CalMind's live API being up) and
-then builds whatever platforms each app's own deploy doesn't ship by itself.
-Two rules apply on this machine regardless of which repo you're in: never run
+**This repo ships itself.** macOS, iOS and Android are built by this repo's
+own `tools/build-platforms.sh`, which the `dtp`/`tdtp` lane runs — the desktop
+bundle between the deploy and the tag, the device builds after the push. Only
+Windows is somebody else's (CI, since Tauri cannot cross-compile).
+
+It was not always so, and the hole is worth remembering: until 2026-08-23 the
+platform builds lived only in CoreMind's shared `bin/build-platforms.sh`, so a
+ChefMind release could deploy, tag and push with the Mac bundle still built
+from whatever was last lying around. It did — the `.app` was a day behind and
+had never heard of the Pantry tab, while the web had shipped it. Sean: *"This
+repo should be able to ship itself (and needed dependencies) on its own...
+coremind is to ship all apps simultaneously."* CoreMind now detects an app
+carrying `tools/build-platforms.sh` and passes `--platforms` through to its
+lane rather than reaching in afterwards.
+
+CoreMind is still what ships the SUITE at once: `sh bin/dtp.sh all --full
+--platforms` runs every app's tdtp lane in dependency order (core first, then
+CalMind, then this repo — ChefMind's deploy depends on CalMind's live API
+being up). Two rules apply on this machine regardless of which repo you're in: never run
 two heavy build/device processes concurrently (proven twice to cause real
 failures), and remember the phone's hard cap of 3 installed apps at a time
 (currently CalMind, ChefMind, AcctMind — MyCalMind is deliberately not one of
@@ -244,6 +260,15 @@ them, to stay under that cap).
 - **`Modal` fades in, so a screenshot taken right after opening one shows it
   half-transparent.** Two minutes went on "why is the variants window see-
   through" before the DOM said it was `rgb(26,26,26)` all along.
+- **The head patch IS the PWA, so a desktop build that skips it ships a
+  different page from the site.** `tools/patch-web-html.mjs` does not just
+  touch the `<head>` — it writes `sw.js` and `manifest.webmanifest` and
+  injects the service-worker registration. CoreMind's mac path ran
+  `export:web` alone, so the Mac bundle carried the bare export (6 staged
+  files) while the site and the Windows CI bundle carried the patched one (9),
+  and nothing compared them. `tools/build-platforms.sh` patches. The worker
+  cannot register from `tauri://localhost` and does not need to: the injected
+  call ends in `.catch(...)`.
 - **The shell's working directory persists between Bash calls.** Use absolute
   paths.
 - **Ask what happens when a write fails.** Same rule as upstream: the snapshot

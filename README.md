@@ -123,9 +123,23 @@ It writes `/home/public/ChefMind` and nothing else. There is no test instance:
 Sean asked for it straight at production, so the gates are the whole rehearsal.
 The SSH login lives in `deploy.conf` (gitignored — see `deploy.conf.sample`).
 
-A release is one gesture:
+A release is one gesture, and it ships every platform this repo has — the web,
+then the macOS bundle before the tag, then iOS and Android after the push:
 
 ```
-npm run dtp      # deploy, tag, push — bumps the minor version
-npm run tdtp     # the same lane with the full test run in front
+npm run dtp                      # deploy, tag, push — bumps the minor version
+npm run tdtp                     # the same lane with the full test run in front
+npm run tdtp -- --web            # the release only, no platform builds
+npm run tdtp -- --mac            # …and just the desktop bundle
+```
+
+Naming a platform selects only it; naming none means all of them. The device
+builds run after the push and are reported rather than fatal — an unplugged
+phone is not a failed release. Windows is CI's alone, since Tauri does not
+cross-compile.
+
+The platform builds live in `tools/build-platforms.sh`, runnable on their own:
+
+```
+sh tools/build-platforms.sh --mac --ios --android
 ```
