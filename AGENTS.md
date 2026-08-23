@@ -1,5 +1,9 @@
 # Working in ChefMind
 
+The baseline for all of Sean's repos lives in ~/GIT/AgentSuite/AGENTS.md
+and is imported here; this file holds only what is true of THIS repo.
+@../AgentSuite/AGENTS.md
+
 CalMind's recipes plus a shopping list and a pantry, on CalMind's server and
 CalMind's accounts. (Reminders were removed 2026-08-21 on Sean's word — the
 `reminder` record type stays, because the shopping AND pantry rows are reminder
@@ -29,11 +33,8 @@ through lives THERE, not here.
   `https://seancheren.com/...` first, and running the app on a laptop under
   that would have written test records into Sean's real store through an API
   that does not know the space yet.
-- **`dtp` = deploy, tag, push; `tdtp` = test, deploy, tag, push.** Sean,
-  2026-08-22 — two lanes, and the `t` in front is the full test run, not the
-  tag. `npm run dtp` / `npm run tdtp` (tools/dtp.sh, tools/tdtp.sh). Either
-  lane bumps the MINOR version — x.y.0 → x.(y+1).0, as everywhere in the
-  suite — in the five files that must move together: `app/app.json`
+- **`npm run dtp` / `npm run tdtp`** (tools/dtp.sh, tools/tdtp.sh). Either
+  lane bumps the version in the five files that must move together: `app/app.json`
   (version), `package.json`, `desktop/package.json`,
   `desktop/src-tauri/tauri.conf.json` and `desktop/src-tauri/Cargo.toml`
   (Cargo.lock follows). `ios.buildNumber`/`android.versionCode` move by hand
@@ -42,10 +43,7 @@ through lives THERE, not here.
   Android after the push (`tools/build-platforms.sh`). Naming a platform
   selects only it; naming none means all of them; `--web` is how you say "the
   release and no platform builds".
-  A failed deploy stops the lane: nothing is tagged, nothing is pushed, and a
-  re-run picks the still-untagged version up rather than burning a number.
-  Tags are bare `x.y.0` — no `v`, matching every app in the suite (Sean,
-  2026-08-22). The old `chefmind-` namespace existed because two apps shared
+  The old `chefmind-` namespace existed because two apps shared
   CalMind's repo; this repo's history carries those releases retagged as
   1.0.0/1.0.1/1.1.0, and CalMind no longer holds a `chefmind-` tag at all.
 - **Prod is the only instance.** Sean, 2026-08-21: straight to
@@ -59,7 +57,6 @@ through lives THERE, not here.
   says so OUT LOUD when no checkout exists — the live API `spaces` gate is
   then the only server check. `e2e-router.php` reaches the same checkout for
   local runs.
-- **`main` is the branch.** Stage explicit paths — never `git add -A`.
 
 ## How it is wired
 
@@ -173,9 +170,7 @@ lane rather than reaching in afterwards.
 CoreMind is still what ships the SUITE at once: `sh bin/dtp.sh all --full
 --platforms` runs every app's tdtp lane in dependency order (core first, then
 CalMind, then this repo — ChefMind's deploy depends on CalMind's live API
-being up). Two rules apply on this machine regardless of which repo you're in: never run
-two heavy build/device processes concurrently (proven twice to cause real
-failures), and remember the phone's hard cap of 3 installed apps at a time
+being up). Remember the phone's hard cap of 3 installed apps at a time
 (currently CalMind, ChefMind, AcctMind — MyCalMind is deliberately not one of
 them, to stay under that cap).
 
@@ -269,8 +264,6 @@ them, to stay under that cap).
   and nothing compared them. `tools/build-platforms.sh` patches. The worker
   cannot register from `tauri://localhost` and does not need to: the injected
   call ends in `.catch(...)`.
-- **The shell's working directory persists between Bash calls.** Use absolute
-  paths.
 - **Ask what happens when a write fails.** Same rule as upstream: the snapshot
   is the device's only copy between syncs, and a store that will not parse is
   moved aside and reported, never treated as an empty account.
