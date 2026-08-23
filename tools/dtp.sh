@@ -23,8 +23,10 @@
 #   7. dispatch the desktop-windows workflow (CI builds the pushed tree);
 #      a dispatch failure is reported but does not un-ship the release
 #   8. the device builds — iOS on the phone, Android on an emulator — AFTER
-#      the push and reported rather than fatal, because the release has
-#      already happened and an unplugged phone must not read as a failed one
+#      the push and never fatal TO THE RELEASE, because the release has
+#      already happened and an unplugged phone must not un-ship it. The lane
+#      still exits non-zero if one did not finish (see the foot of this file):
+#      the release stands, the exit status does not lie about it.
 #
 # THIS REPO SHIPS ITSELF. Steps 4 and 8 were CoreMind's alone until
 # 2026-08-23, and the hole that left was invisible from inside either repo: a
@@ -236,9 +238,11 @@ if command -v gh >/dev/null 2>&1 && [ -f .github/workflows/desktop-windows.yml ]
 fi
 
 # ------------------------------------------------------------- the device builds
-# After the push, and NOT fatal. The release is done by here — the web is
-# live, the tag is on the remote — so a phone that is not plugged in is a
-# thing to be told about, not a failed release to unpick.
+# After the push, and never fatal TO THE RELEASE. The release is done by here
+# — the web is live, the tag is on the remote — so a phone that is not plugged
+# in is a thing to be told about, not a failed release to unpick. It is still
+# collected and carried to the exit status at the foot of this file; the two
+# are different questions and were run together until 2026-08-23.
 #
 # One at a time, never in parallel: two heavy build/device processes at once
 # has caused real failures on this machine twice (AGENTS.md).
@@ -268,4 +272,22 @@ if [ -n "$RUN_ID" ]; then
   fi
 fi
 
+# AND YET THE LANE ENDS NON-ZERO. Nothing above is undone by this: the web is
+# live, the tag is on the remote, and the card a line up was closed `ok`
+# severity 2 on purpose. What changes is only the one summary a caller reads
+# without being told — 1.9.0 handed back a clean 0 with the iOS build skipped,
+# because the lane could not pick a phone out of the two paired to this machine
+# (that half is fixed in build-platforms.sh, which disambiguates by name now;
+# this is the other half). CoreMind's bin/dtp.sh ends non-zero on exactly this
+# and says why in one line — "it all worked" cannot be read off the exit
+# status — so this lane matches it rather than growing a second convention.
+#
+# LAST IN THE FILE, deliberately. REPORT_DONE is already 1 and the `finish`
+# call above has already run by the time control reaches this, so the exit
+# cannot jump the status report, and the EXIT trap's failed-3 fallback stays
+# suppressed — the run is finished, not stopped.
+if [ -n "$DEVICE_FAILED" ]; then
+  echo "==> $NEW is live and tagged; the lane ends non-zero for the device builds above"
+  exit 1
+fi
 echo "==> dtp done: $NEW is live"

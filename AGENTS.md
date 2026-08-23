@@ -38,11 +38,9 @@ through lives THERE, not here.
   (version), `package.json`, `desktop/package.json`,
   `desktop/src-tauri/tauri.conf.json` and `desktop/src-tauri/Cargo.toml`
   (Cargo.lock follows). `ios.buildNumber`/`android.versionCode` move by hand
-  per device build, not per dtp. **The lane ships every platform this repo
-  has** — the web deploy, then the macOS bundle before the tag, then iOS and
-  Android after the push (`tools/build-platforms.sh`). Naming a platform
-  selects only it; naming none means all of them; `--web` is how you say "the
-  release and no platform builds".
+  per device build, not per dtp. What the lane ships, in what order, and what
+  it refuses is **"The release lane, end to end"** below — one account, which
+  the README points at rather than repeating.
   The old `chefmind-` namespace existed because two apps shared
   CalMind's repo; this repo's history carries those releases retagged as
   1.0.0/1.0.1/1.1.0, and CalMind no longer holds a `chefmind-` tag at all.
@@ -152,20 +150,90 @@ through lives THERE, not here.
   repo's `tools/build-platforms.sh --android`. Confirmed working
   2026-08-22.
 
-**This repo ships itself.** macOS, iOS and Android are built by this repo's
-own `tools/build-platforms.sh`, which the `dtp`/`tdtp` lane runs — the desktop
-bundle between the deploy and the tag, the device builds after the push. Only
-Windows is somebody else's (CI, since Tauri cannot cross-compile).
+## The release lane, end to end
 
-It was not always so, and the hole is worth remembering: until 2026-08-23 the
-platform builds lived only in CoreMind's shared `bin/build-platforms.sh`, so a
-ChefMind release could deploy, tag and push with the Mac bundle still built
-from whatever was last lying around. It did — the `.app` was a day behind and
-had never heard of the Pantry tab, while the web had shipped it. Sean: *"This
-repo should be able to ship itself (and needed dependencies) on its own...
-coremind is to ship all apps simultaneously."* CoreMind now detects an app
-carrying `tools/build-platforms.sh` and passes `--platforms` through to its
-lane rather than reaching in afterwards.
+**This repo ships itself.** macOS, iOS and Android are built by this repo's
+own `tools/build-platforms.sh`, which the `dtp`/`tdtp` lane runs. Only Windows
+is somebody else's (CI, since Tauri cannot cross-compile). `tools/dtp.sh`'s
+head comment is the step list; what a reader coming to it cold needs is the
+shape and the reasons:
+
+1. **It refuses BEFORE it ships, never after.** HEAD not on `main` (the push
+   names main explicitly, so any other branch would deploy and tag a tree it
+   then does not push, while printing "pushed"); uncommitted tracked changes;
+   a tree the pull left dirty (`git pull --autostash` exits 0 even when the
+   autostash pop conflicted, so the check runs again after it); a version that
+   is not `x.y.z`; a tag that already exists. Each of those stops the lane
+   with nothing touched.
+2. **The version bump, or the reuse.** A version a previous run bumped but
+   never tagged is SHIPPED AGAIN rather than skipped past, so re-running a
+   failed lane does not burn a number. Every substitution is verified after
+   the fact — a substitution that matches nothing reports success, which is
+   AcctMind's hard-learned lesson, not a hypothetical.
+3. **`./deploy.sh --yes-prod`** — the web, and the only thing deployed. Its
+   gates live in there; a failed deploy stops everything and is never tagged
+   around.
+4. **The macOS bundle, BEFORE the tag.** That order is the whole point: a
+   broken desktop build leaves the version untagged, so the re-run reuses it,
+   exactly as a failed deploy does.
+5. **Tag `x.y.0` (bare), push `--atomic --follow-tags`,** then dispatch the
+   desktop-windows workflow. `--atomic` because `--follow-tags` is per-ref: a
+   tag can land on the remote while `main` is rejected, publishing a tag for a
+   commit nobody can fetch. If the push is refused the local tag comes back
+   off, leaving the version untagged and reusable.
+6. **The device builds, AFTER the push** — iOS on the phone, Android on an
+   emulator, one at a time and never in parallel. They cannot un-ship a
+   release that is already live and tagged, so a failure here unpicks nothing:
+   it prints the exact `sh tools/build-platforms.sh --ios` to re-run, closes
+   the status card `ok` severity 2, and **ends the lane non-zero**. That last
+   part was missing until 2026-08-23: 1.9.0 exited 0 with the iOS build
+   skipped, because the lane could not pick a phone out of the two paired to
+   this machine (that half is fixed in `build-platforms.sh`, which now
+   disambiguates by name). Same rule as CoreMind's `bin/dtp.sh`: "it all
+   worked" cannot be read off the exit status.
+
+**Which platforms**: naming one selects only it, naming none means all of
+them, and `--web` is how you say "the release and no platform builds". That is
+`tools/build-platforms.sh`'s own convention — positive selection, because
+zeroing the OTHERS per flag does not compose past two — and `tools/dtp.sh`
+takes the same flags.
+
+**It reports to seancheren.com/status** — the baseline's rule, and this repo
+was the exception to it until 2026-08-23. Sean that day: *"i dont see the tdtp
+from ChefMind on status"*. A repo that ships ITSELF was precisely the one that
+had never reported, so the page went quiet for exactly the runs nobody else
+knew were coming, and the history graph recorded no purple for them at all.
+The lane now calls CoreMind's `bin/report-status.sh` from beside this
+checkout: a `start` before the tree is touched, a `finish` with a severity at
+the end, and an EXIT/INT/TERM trap so a lane that dies anywhere — failed
+deploy, refused push, Ctrl-C — does not leave this repo purple for ever. The
+call is `|| true` on top of a reporter that already exits 0 on every failure
+path, because CoreMind may not be checked out beside this repo at all.
+
+**A batch owns its own card.** Under CoreMind's orchestrator `MIND_RUN_ID` is
+set, and this lane then opens no run of its own — reporting again would draw a
+second card for a job that is one job (Sean, 2026-08-23: *"there should be one
+card per tdtp if multiple jobs are triggered in one batch"*). Run alone the
+variable is unset and the lane opens and closes its own, as before.
+
+**No canon-drift gate runs here.** `npm run dtp` from this repo checks the
+things above and nothing about canon. The drift gate belongs to the BATCH:
+CoreMind's `bin/dtp.sh` propagates canon first and then refuses to tag
+anything if that propagation changed CalMind, ChefMind, AcctMind or MyCalMind
+— the tree "was carrying drift", and a release tagged then would name
+something nobody reviewed. So `sh bin/dtp.sh all` is gated on this repo's
+canon files and a lane run from here is not. What this repo owes canon is
+listed in `CoreMind/consumers/ChefMind.tsv`.
+
+**It was not always so**, and the hole is worth remembering: until 2026-08-23
+the platform builds lived only in CoreMind's shared `bin/build-platforms.sh`,
+so a ChefMind release could deploy, tag and push with the Mac bundle still
+built from whatever was last lying around. It did — the `.app` was a day
+behind and had never heard of the Pantry tab, while the web had shipped it.
+Sean: *"This repo should be able to ship itself (and needed dependencies) on
+its own... coremind is to ship all apps simultaneously."* CoreMind now detects
+an app carrying `tools/build-platforms.sh` and passes `--platforms` through to
+its lane rather than reaching in afterwards.
 
 CoreMind is still what ships the SUITE at once: `sh bin/dtp.sh all --full
 --platforms` runs every app's tdtp lane in dependency order (core first, then

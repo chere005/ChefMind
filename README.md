@@ -16,7 +16,7 @@ app/            The Expo app, cloned from CalMind's apps/app.
 packages/core/  The brain, cloned — plus shopping.ts, units.ts, grocery.ts and
                 variant.ts, which have no twins upstream.
 tools/          The web export's head patch, service worker, the deploy-guard
-                prover, and the dtp/tdtp release lanes.
+                prover, the macOS/iOS/Android builds, and the dtp/tdtp lanes.
 deploy.sh       The one deploy: the web client, to production.
 spec/           The behaviour contract, copied so core's suite runs here.
 ```
@@ -124,7 +124,7 @@ Sean asked for it straight at production, so the gates are the whole rehearsal.
 The SSH login lives in `deploy.conf` (gitignored — see `deploy.conf.sample`).
 
 A release is one gesture, and it ships every platform this repo has — the web,
-then the macOS bundle before the tag, then iOS and Android after the push:
+then the macOS bundle, then iOS and Android:
 
 ```
 npm run dtp                      # deploy, tag, push — bumps the minor version
@@ -133,10 +133,14 @@ npm run tdtp -- --web            # the release only, no platform builds
 npm run tdtp -- --mac            # …and just the desktop bundle
 ```
 
-Naming a platform selects only it; naming none means all of them. The device
-builds run after the push and are reported rather than fatal — an unplugged
-phone is not a failed release. Windows is CI's alone, since Tauri does not
-cross-compile.
+Naming a platform selects only it; naming none means all of them. Windows is
+CI's alone, since Tauri does not cross-compile.
+
+What the lane does in what order — why the desktop bundle comes before the tag
+and the device builds after the push, why a device build that fails leaves the
+release standing and still ends the lane non-zero, and how a run reports itself
+to seancheren.com/status — is `AGENTS.md`, "The release lane, end to end". It
+is written once, there.
 
 The platform builds live in `tools/build-platforms.sh`, runnable on their own:
 
