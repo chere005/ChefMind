@@ -57,13 +57,71 @@ through lives THERE, not here.
   local runs.
 - **`main` is the branch.** Stage explicit paths — never `git add -A`.
 
+## How it is wired
+
+- **`packages/core` is the brain and it is platform-free**, exported through
+  ONE barrel (`src/index.ts`). Every import in `app/` is
+  `from '@calmind/core'` — there is not a single deep path into the package,
+  and a new core file is not reachable until the barrel names it.
+- **A record is sync metadata plus an opaque `payload`** (`core/types.ts`).
+  `id`, `type`, `updated` and `deleted` stay in the clear so the server can
+  merge without reading content; everything the user wrote is inside
+  `payload`. Folders, sections and calendars are records too, and items point
+  at them BY ID — so a rename touches one record instead of chasing a name
+  through five files.
+- **`core/sync.ts` is the engine, and it exists once for all platforms.**
+  Per-record last-write-wins on `updated`; a TIE KEEPS THE INCUMBENT, which is
+  what makes an echo of our own push a no-op instead of a record two devices
+  hand back and forth for ever. `cursor` means "I have everything up to seq
+  N", so a pull is only the tail. It is transport-agnostic: the app hands it a
+  function that POSTs a `SyncRequest`.
+- **`app/src/store.tsx` is the app's one stateful seam** — a React context
+  wrapping that engine, local-first. An edit lands in the engine and the
+  screen renders from it; the SNAPSHOT is written to AsyncStorage
+  IMMEDIATELY, and only the network round-trip is debounced (800 ms). The
+  ordering is not incidental: debouncing the persist too lost an edit to a
+  reload, which the e2e drag spec caught.
+- **`app/src/api.ts` is the thin HTTP edge** — action posts, bearer token,
+  JSON both ways, a 60 s timeout because web `fetch` has none — and it is
+  where `SYNC_SPACE` lives. **`app/src/config.ts` decides WHERE**, deriving
+  the API from the page's origin with the tauri and localhost branches the
+  traps below explain.
+- **There are seven screens, and two of them are one file.**
+  `screens/Notes.tsx` is Recipes (the record type is still `note`);
+  `screens/Shopping.tsx` exports both `Shopping()` and `Pantry()` as
+  `<FlagList kind>`, reading `folder.payload[kind]`; `nav.tsx` is the
+  four-tab bar. Storage keys are prefixed `chefmind.` and tagged by instance,
+  because this app and CalMind share one origin and would otherwise share one
+  localStorage key.
+
 ## Development
 
 - **Tests**: `npm run test` (→ `npm run test:core`) runs `packages/core`'s
-  suite with `--run` (no watch mode). `spec/` carries the behaviour contract
-  copied down from CalMind so core's suite runs against it here too.
+  suite with `--run` (no watch mode). One file or one case:
+
+  ```
+  npm -w @calmind/core run test -- --run test/shopping.test.ts
+  npm -w @calmind/core run test -- --run -t 'pantry'
+  ```
+
+  Go through npm rather than a bare `vitest`: the package script pins
+  `TZ=America/Chicago`, and the clock and day tests are written to it.
+- **`spec/*.json` is DATA the suite reads at run time**, not documentation —
+  `test/spec.test.ts` replays `parse`, `repeats`, `sort` and `clock`, and
+  `protocol.json` is read by `protocolids` and `batchlimit`. It is the
+  contract shared with CalMind's web reference and the native cores, so a
+  behaviour change starts by amending the vector, never by editing the test
+  around it.
 - **Types**: `npm run typecheck` runs `tsc --noEmit` over `packages/core` and
   `app` — the two workspaces that are clones, not the desktop shell.
+- **There is no linter and no formatter.** The typecheck and the core suite
+  are the whole static gate; do not go looking for an eslint config to obey.
+- **`npm run test:deploy`** proves the deploy guards by breaking copies of
+  `deploy.sh` and watching each copy stop. It needs no network, no SSH and no
+  `deploy.conf`, so it is always runnable.
+- **Running it locally**: the three-line recipe is in the README (export the
+  web build, patch its head, serve it with `e2e-router.php`) — plus CalMind's
+  own API, see the traps.
 - **Workspaces**: an npm workspaces monorepo — `packages/*`, `app`, `desktop`.
 
 ## Platforms — what ships where, and how
@@ -183,3 +241,12 @@ them, to stay under that cap).
 - **Ask what happens when a write fails.** Same rule as upstream: the snapshot
   is the device's only copy between syncs, and a store that will not parse is
   moved aside and reported, never treated as an empty account.
+- **The local run needs CalMind's dev API on 8788 as well as the router.**
+  `config.ts` returns `http://127.0.0.1:8788/api/index.php` for ANY localhost
+  hostname — that is the Metro-dev fallback, and the exported bundle carries
+  it too (grep `app/dist` and it is there). So the page served by
+  `e2e-router.php` on 8792 does NOT talk to the router's own `/calmind/api`
+  half; it talks to 8788, which is where CalMind's README puts
+  `php -S 127.0.0.1:8788 -t server/public`. Start that too — CORS on that API
+  is open, so the cross-port call is fine — or the login card fails against a
+  port with nothing on it while the router sits there answering nothing.
