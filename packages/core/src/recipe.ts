@@ -43,10 +43,10 @@ const UNIT_MAP: Record<string, string> = {
   ounce: 'oz', ounces: 'oz', oz: 'oz', pound: 'lb', pounds: 'lb', lb: 'lb', lbs: 'lb',
   cup: 'cup', cups: 'cups', clove: 'clove', cloves: 'cloves', can: 'can', cans: 'cans',
   // The big US volumes. Missing until 2026-08-22, which showed up the first
-  // time Sean's Cheese card reached the shopping list: '½ gal whole milk' and
-  // '1 gal whole milk' have no unit between them, so they combined into
-  // "1 ½ gal whole milk" — a quantity whose unit is part of its NAME. Exact
-  // conversions, like the cup, so units.ts can add them to anything else.
+  // time a recipe using them was totalled: '½ gal whole milk' and '1 gal whole
+  // milk' had no unit between them, so 'gal' stayed part of the NAME and the
+  // two combined into "1 ½ gal whole milk". Every recipe that says gallon,
+  // quart or pint was parsing a quantity with no measure attached to it.
   gallon: 'gal', gallons: 'gal', gal: 'gal',
   quart: 'qt', quarts: 'qt', qt: 'qt', qts: 'qt',
   pint: 'pt', pints: 'pt', pt: 'pt', pts: 'pt',
