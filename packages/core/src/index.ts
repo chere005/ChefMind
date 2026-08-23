@@ -25,4 +25,10 @@ export * from './search';
 // ChefMind only: the shopping list built from chosen recipes. CalMind's core
 // has no twin — see the file's own header.
 export * from './shopping';
+// …and the two files it stands on: exact within-dimension unit conversion, and
+// the aisle a thing is found in. Both are ChefMind's alone for the same reason.
+export * from './units';
+export * from './grocery';
+// …and variants of one recipe card, which are ChefMind's alone for the same reason.
+export * from './variant';
 export * from './meetreq';

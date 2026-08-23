@@ -40,6 +40,18 @@ export type Folder = {
    * the name is a label, the flag is the identity.
    */
   shopping?: boolean;
+  /**
+   * THE PANTRY (ChefMind, Sean 2026-08-22: "add a third tab to chefmind which
+   * is a list of groceries on hand... call that tab pantry... if something is
+   * on the pantry already, skip adding to shopping cart").
+   *
+   * A second flag beside `shopping`, and the same shape for the same reason: a
+   * pantry row IS a reminder — a line of text with a tick, an order key and a
+   * swipe to delete — so nothing new has to learn about it. The two flags are
+   * mutually exclusive by construction; normalize seeds exactly one folder
+   * wearing each, and neither is counted as an ordinary reminders folder.
+   */
+  pantry?: boolean;
 };
 export type Section = { name: string; folderId: string; ord: string };
 export type Reminder = {
@@ -78,7 +90,35 @@ export type Event = {
  *  before it existed has none, and reads as a plain note — which is exactly
  *  what Sean's hand-typed marker-shaped notes turned out to be (2026-08-19);
  *  see isRecipeNote in recipe.ts. */
-export type Note = { title: string; body: string; date: string | null; folderId: string; sectionId: string; ord: string; recipe?: boolean };
+export type Note = {
+  title: string; body: string; date: string | null;
+  folderId: string; sectionId: string; ord: string; recipe?: boolean;
+  /**
+   * VARIANTS of one recipe (Sean, 2026-08-22, of the Cheese card: "a dropdown
+   * next to the 1/2x 1x and 2x buttons that lets you choose a varient,
+   * Ricotta, Marscapone, Mozzarella/Burrata").
+   *
+   * One card, several things you might actually make from it. A variant names
+   * itself and lists the SUBHEADERS it shows — "For the béchamel:" and its
+   * kind, the sections a recipe body is already divided into — so choosing one
+   * filters the card down to the parts that belong to it.
+   *
+   * Subheaders are named by their TEXT, not by an index: a variant that
+   * pointed at "the third subheader" would silently mean something else the
+   * moment a section was added above it, and a recipe is edited far more often
+   * than its variants are.
+   *
+   * Absent on every recipe that has none, which is nearly all of them — the
+   * card renders exactly as it always did until somebody adds the first one.
+   */
+  variants?: RecipeVariant[];
+};
+
+/** One named subset of a recipe's subheadered sections. `sections` holds
+ *  subheader TEXT (with its colon, as written in the body). An empty list
+ *  means the variant shows the whole card, which is what a just-created
+ *  variant does before anything is ticked. */
+export type RecipeVariant = { id: string; name: string; sections: string[] };
 
 export type HabitSection = { name: string; color: string; ord: string };
 /**

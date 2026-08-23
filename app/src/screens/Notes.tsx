@@ -13,7 +13,7 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { defaultNoteTitle, looksLikeDefaultNoteTitle, deleteSection, renameSection, sectionNameTaken, byRecOrd, ingredientParts, isRecipeNote, joinRecipeBody, recipeFromPages, richLines, scaleRecipeBody, shoppingLines, splitRecipeBody, duplicateItem, prefsPut, moveNote, moveSection, moveSectionEmptyingFolder, newId, nowStr, ordBetween, parseWhenFromText, todayStr, type Rec } from '@calmind/core';
+import { defaultNoteTitle, looksLikeDefaultNoteTitle, deleteSection, renameSection, sectionNameTaken, byRecOrd, findVariant, ingredientParts, isRecipeNote, joinRecipeBody, liveSections, recipeFromPages, recipeSections, richLines, scaleRecipeBody, shoppingLines, splitRecipeBody, variantBody, duplicateItem, prefsPut, moveNote, moveSection, moveSectionEmptyingFolder, newId, nowStr, ordBetween, parseWhenFromText, todayStr, type Rec, type RecipeVariant } from '@calmind/core';
 import * as Clipboard from 'expo-clipboard';
 import { useStore } from '../store';
 import { UnitBadge } from '../components/IngredientBadge';
@@ -177,6 +177,26 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
   // Doubling a recipe is a way of READING it, not an edit — nothing is
   // written, and 1× is always one tap away.
   const [scale, setScale] = useNoteScoped(openId, 1);
+  /**
+   * Which VARIANT of this card is being shown, and whether the manage window
+   * is open. Note-scoped like the scale, and for the same reason: a variant
+   * chosen on one recipe means nothing on the next, and carrying it across
+   * would show a card filtered by a section it does not have.
+   *
+   * Deliberately NOT stored. Which variant you last looked at is a view, like
+   * the scale — it is not a fact about the recipe, and syncing it would make
+   * two devices argue about what the card says.
+   */
+  const [variantId, setVariantId] = useNoteScoped(openId, null as string | null);
+  const [variantMenu, setVariantMenu] = useNoteScoped(openId, false);
+  const [variantsOpen, setVariantsOpen] = useState(false);
+  /**
+   * Which variant's checkboxes are open in the manage window — Sean's rule:
+   * "only show the check boxes for the varients when tapped on a varient which
+   * allows renaming the varient and modifying the selected sections". One at a
+   * time, so a window with four variants is four rows rather than four lists.
+   */
+  const [openVariantId, setOpenVariantId] = useState<string | null>(null);
   const [recipeOpen, setRecipeOpen] = useNoteScoped(openId, false);
   // The recipe-note editor splits into [above][blob][below] (Sean,
   // 2026-08-18): the blob is the marker region, not editable here and not
@@ -431,16 +451,23 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
   const [addingSection, setAddingSection] = useState<string | null>(null); // folderId
   const [newSecName, setNewSecName] = useState('');
 
-  const { folders, sectionsOf, notesOf } = useMemo(() => {
+  const { folders, sectionsOf, notesOf, selectableIds } = useMemo(() => {
     const folders = visibleFolders;
     const sections = recs.filter((r): r is Rec<'section'> => r.type === 'section').sort(byRecOrd);
     const notes = recs.filter((r): r is Rec<'note'> => r.type === 'note').sort(byRecOrd);
-    return {
-      folders,
-      sectionsOf: (fid: string) => sections.filter((x) => x.payload.folderId === fid),
-      notesOf: (sid: string) => notes.filter((x) => x.payload.sectionId === sid),
-    };
+    const sectionsOf = (fid: string) => sections.filter((x) => x.payload.folderId === fid);
+    const notesOf = (sid: string) => notes.filter((x) => x.payload.sectionId === sid);
+    // Everything Select-all can reach: the recipes that are ON SCREEN, in the
+    // folders currently shown. Not every note in the store — selecting rows
+    // that are folded away, filtered out or a partner's would hand the
+    // shopping list ingredients from recipes nobody can see they picked.
+    const selectableIds = folders.flatMap((f) => sectionsOf(f.id).flatMap((sec) => notesOf(sec.id).map((n) => n.id)));
+    return { folders, sectionsOf, notesOf, selectableIds };
   }, [recs, visibleFolders]);
+
+  /** Select-all is a TOGGLE, so it needs to know whether it is already done. */
+  const allSelected = selectableIds.length > 0 && selected.length >= selectableIds.length
+    && selectableIds.every((id) => selected.includes(id));
 
   /** Every section, so the button can both act and show which way it points. */
   const mySectionIds = folders.flatMap((f) => sectionsOf(f.id).map((x) => x.id));
@@ -511,7 +538,20 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
   // Only OUR bodies scale — the markers are what say the ingredients have
   // been read and separated from the prose around them.
   const isRecipe = open ? isRecipeNote(open.payload) : false;
-  const shownBody = open ? (scale === 1 ? open.payload.body : scaleRecipeBody(open.payload.body, scale)) : '';
+  /** The card's own subheaders, which are what a variant is built out of. */
+  const cardSections = open ? recipeSections(open.payload.body) : [];
+  const variants = open?.payload.variants ?? [];
+  const activeVariant = findVariant(variants, variantId);
+  /**
+   * Variant first, then scale. The order matters: scaling rewrites the
+   * quantities inside the lines, so filtering afterwards would have to match
+   * subheaders in text the scaler had already been through. Filtering first
+   * hands the scaler a smaller, otherwise identical card.
+   */
+  const baseBody = open
+    ? (activeVariant ? variantBody(open.payload.body, liveSections(open.payload.body, activeVariant)) : open.payload.body)
+    : '';
+  const shownBody = open ? (scale === 1 ? baseBody : scaleRecipeBody(baseBody, scale)) : '';
 
   const goesChoices = useMemo(() => {
     const allFolders = recs
@@ -557,6 +597,20 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
     const picked = selected
       .map((id) => recs.find((r): r is Rec<'note'> => r.type === 'note' && r.id === id && !r.deleted))
       .filter((n): n is Rec<'note'> => n !== undefined);
+    // What is already in the pantry, so it is never added to the list. Read
+    // here rather than filtered afterwards because core owns the matching —
+    // 'flour' must not claim 'almond flour', and that rule belongs in one
+    // place with the tests for it.
+    const pantryTexts = (() => {
+      const pf = recs.find((r): r is Rec<'folder'> => r.type === 'folder' && !r.deleted && r.payload.pantry === true);
+      if (!pf) return [];
+      const secs = new Set(
+        recs.filter((r): r is Rec<'section'> => r.type === 'section' && !r.deleted && r.payload.folderId === pf.id).map((x) => x.id),
+      );
+      return recs
+        .filter((r): r is Rec<'reminder'> => r.type === 'reminder' && !r.deleted && secs.has(r.payload.sectionId))
+        .map((r) => r.payload.text);
+    })();
     const lines = shoppingLines(
       picked.map((n) => ({
         title: n.payload.title,
@@ -564,9 +618,15 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
         // ordinary text before and after it, and none of that is shopping.
         ingredients: recipeFromPages([splitRecipeBody(n.payload.body)?.recipe ?? n.payload.body]).ingredients,
       })),
+      pantryTexts,
     );
     if (lines.length === 0) {
-      toast(picked.length === 1 ? 'That recipe lists no ingredients.' : 'Those recipes list no ingredients.');
+      // Two different nothings, and saying which is the whole point: a cook
+      // who has everything already should not be left wondering whether the
+      // button worked.
+      const listed = picked.some((n) => recipeFromPages([splitRecipeBody(n.payload.body)?.recipe ?? n.payload.body]).ingredients.length > 0);
+      if (listed) toast('Everything for that is already in the pantry.');
+      else toast(picked.length === 1 ? 'That recipe lists no ingredients.' : 'Those recipes list no ingredients.');
       return;
     }
     const folder = recs.find((r): r is Rec<'folder'> => r.type === 'folder' && !r.deleted && r.payload.shopping === true);
@@ -605,6 +665,36 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
     toast(`${lines.length} added to the shopping list.`);
     endEdit();
   };
+
+  /**
+   * Delete every picked recipe, on the second press.
+   *
+   * The same two-press bargain the rows' × makes, and the reason it is not
+   * just a `confirm()`: the suite has no modal confirmations anywhere, and a
+   * control that fills red is both the question and the answer to it. It
+   * disarms itself after 2.5s, so a bar left armed on a screen you walked away
+   * from cannot delete on the next stray tap.
+   */
+  const [delArmed, setDelArmed] = useState(false);
+  const delTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const armOrDelete = () => {
+    if (!delArmed) {
+      setDelArmed(true);
+      clearTimeout(delTimer.current);
+      delTimer.current = setTimeout(() => setDelArmed(false), 2500);
+      return;
+    }
+    clearTimeout(delTimer.current);
+    setDelArmed(false);
+    const ids = selected.slice();
+    if (ids.length === 0) return;
+    mutate((e) => { for (const id of ids) e.del(id); });
+    toast(ids.length === 1 ? 'Recipe deleted.' : `${ids.length} recipes deleted.`);
+    endEdit();
+  };
+  // Leaving edit mode disarms it: coming back to a bar already showing
+  // "Delete 3?" would be a question about a selection that no longer exists.
+  useEffect(() => { if (!pageEdit) { clearTimeout(delTimer.current); setDelArmed(false); } }, [pageEdit]);
 
   const addSection = (folder: Rec<'folder'>) => {
     const name = newSecName.trim();
@@ -863,7 +953,63 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
                   <Text style={[s.scaleText, scale === f && s.scaleTextOn]}>{label}</Text>
                 </Pressable>
               ))}
+              {/* The variant picker, beside the scale pills (Sean,
+                  2026-08-22). It appears only once the card HAS subheaders to
+                  build a variant out of — a dropdown offering nothing, next to
+                  a Manage window that could only ever produce empty variants,
+                  is two controls explaining each other's uselessness. */}
+              {cardSections.length > 0 && (
+                <>
+                  <Pressable
+                    testID="variant-pick"
+                    accessibilityRole="button"
+                    accessibilityLabel={activeVariant ? `Variant: ${activeVariant.name}` : 'Whole recipe — choose a variant'}
+                    onPress={() => setVariantMenu((v) => !v)}
+                    style={[s.scalePill, activeVariant && s.scalePillOn]}
+                    hitSlop={6}
+                  >
+                    <Text style={[s.scaleText, activeVariant && s.scaleTextOn]} numberOfLines={1}>
+                      {activeVariant ? activeVariant.name : 'Whole recipe'} ▾
+                    </Text>
+                  </Pressable>
+                  <CircleBtn
+                    testID="variant-manage"
+                    glyph="⚙"
+                    label="Manage variants"
+                    size={26}
+                    color={T.dim}
+                    onPress={() => { setVariantMenu(false); setVariantsOpen(true); }}
+                  />
+                </>
+              )}
               {scale !== 1 && <Text style={s.scaleNote}>Scaled — 1× to edit</Text>}
+            </View>
+          )}
+          {/* The dropdown itself, under the row rather than floating over it:
+              a menu inside a Scroll that is absolutely positioned ends up
+              clipped by the row's own bounds on the web. */}
+          {isRecipe && variantMenu && cardSections.length > 0 && (
+            <View testID="variant-menu" style={s.variantMenu}>
+              <Pressable
+                testID="variant-opt-all"
+                style={[s.variantOpt, variantId === null && s.variantOptOn]}
+                onPress={() => { setVariantId(null); setVariantMenu(false); }}
+              >
+                <Text style={[s.variantOptText, variantId === null && s.variantOptTextOn]}>Whole recipe</Text>
+              </Pressable>
+              {variants.map((v) => (
+                <Pressable
+                  key={v.id}
+                  testID={`variant-opt-${v.name}`}
+                  style={[s.variantOpt, variantId === v.id && s.variantOptOn]}
+                  onPress={() => { setVariantId(v.id); setVariantMenu(false); }}
+                >
+                  <Text style={[s.variantOptText, variantId === v.id && s.variantOptTextOn]}>{v.name}</Text>
+                </Pressable>
+              ))}
+              {variants.length === 0 && (
+                <Text style={s.variantEmpty}>No variants yet — the gear beside this makes one.</Text>
+              )}
             </View>
           )}
           {bodyEditing && editAsRecipe.current ? (
@@ -1020,6 +1166,122 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
             </View>
           </View>
         </Scroll>
+        {/* Manage variants, in the EDITOR branch — the gear that opens it sits
+            beside the scale pills a few lines up, and a modal rendered in the
+            list branch instead would have been unreachable from the only
+            control that sets its flag. */}
+        {variantsOpen && (() => {
+          const rec = open;
+          const varsOf = () => rec.payload.variants ?? [];
+          return (
+        <Modal transparent animationType="fade" onRequestClose={() => setVariantsOpen(false)}>
+          <Pressable style={s.dateBackdrop} onPress={() => setVariantsOpen(false)}>
+            <Pressable style={s.varCard} onPress={(e) => e.stopPropagation()}>
+              <View style={s.varHead}>
+                <Text style={s.dateTitle}>Variants</Text>
+                <CircleBtn
+                  testID="variant-add"
+                  glyph="+"
+                  label="Add a variant"
+                  size={26}
+                  color={T.accent}
+                  onPress={() => {
+                    const id = newId();
+                    const next: RecipeVariant[] = [...varsOf(), { id, name: `Variant ${varsOf().length + 1}`, sections: [] }];
+                    mutate((e) => e.put({ ...rec, payload: { ...rec.payload, variants: next } }));
+                    // Straight into it: a new variant named "Variant 1" with
+                    // nothing ticked is a row you have to tap anyway.
+                    setOpenVariantId(id);
+                  }}
+                />
+              </View>
+              <Scroll contentContainerStyle={s.varScroll}>
+                {varsOf().length === 0 && (
+                  <Text style={s.variantEmpty}>None yet. The + above adds one; each picks which of this recipe’s sections it shows.</Text>
+                )}
+                {varsOf().map((v) => {
+                  const editThis = (fn: (cur: RecipeVariant) => RecipeVariant) => {
+                    const next = varsOf().map((x) => (x.id === v.id ? fn(x) : x));
+                    mutate((e) => e.put({ ...rec, payload: { ...rec.payload, variants: next } }));
+                  };
+                  const isOpen = openVariantId === v.id;
+                  return (
+                    <View key={v.id} style={s.varRow}>
+                      <View style={s.varRowHead}>
+                        <Pressable
+                          testID={`variant-row-${v.name}`}
+                          style={s.varRowBody}
+                          onPress={() => setOpenVariantId(isOpen ? null : v.id)}
+                        >
+                          <Text style={s.varName} numberOfLines={1}>{v.name}</Text>
+                          <Text style={s.varCount}>
+                            {v.sections.length === 0 ? 'whole recipe' : `${v.sections.length} of ${cardSections.length}`}
+                          </Text>
+                        </Pressable>
+                        <ConfirmDelete
+                          testID={`variant-del-${v.name}`}
+                          onDelete={() => {
+                            const next = varsOf().filter((x) => x.id !== v.id);
+                            mutate((e) => e.put({ ...rec, payload: { ...rec.payload, variants: next } }));
+                            // Showing a card filtered by a variant that no
+                            // longer exists would be a card nobody can get out of.
+                            if (variantId === v.id) setVariantId(null);
+                            if (openVariantId === v.id) setOpenVariantId(null);
+                          }}
+                        />
+                      </View>
+                      {isOpen && (
+                        <View style={s.varOpen}>
+                          <Field
+                            testID={`variant-name-${v.name}`}
+                            value={v.name}
+                            onChangeText={(name) => editThis((cur) => ({ ...cur, name }))}
+                            placeholder="Name this variant"
+                          />
+                          {cardSections.length === 0 && (
+                            <Text style={s.variantEmpty}>This recipe has no sections yet — a line ending in a colon makes one.</Text>
+                          )}
+                          {cardSections.map((secName) => {
+                            const on = v.sections.includes(secName);
+                            return (
+                              <Pressable
+                                key={secName}
+                                testID={`variant-sec-${secName}`}
+                                accessibilityRole="checkbox"
+                                accessibilityState={{ checked: on }}
+                                accessibilityLabel={secName}
+                                style={s.varSec}
+                                onPress={() =>
+                                  editThis((cur) => ({
+                                    ...cur,
+                                    sections: on ? cur.sections.filter((x) => x !== secName) : [...cur.sections, secName],
+                                  }))
+                                }
+                              >
+                                <View style={[s.varBox, on && s.varBoxOn]}>
+                                  {on && <Text style={s.varBoxTick}>✓</Text>}
+                                </View>
+                                {/* The colon is part of the stored key, and
+                                    showing it would put a stray one at the end
+                                    of every label. */}
+                                <Text style={s.varSecText}>{secName.replace(/:$/, '')}</Text>
+                              </Pressable>
+                            );
+                          })}
+                        </View>
+                      )}
+                    </View>
+                  );
+                })}
+              </Scroll>
+              <Pressable testID="variant-done" style={s.pickGo} onPress={() => setVariantsOpen(false)}>
+                <Text style={s.pickGoText}>Done</Text>
+              </Pressable>
+            </Pressable>
+          </Pressable>
+        </Modal>
+          );
+        })()}
 
       </View>
     );
@@ -1044,6 +1306,21 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
               color={pageEdit ? T.accent : T.dim}
               onPress={() => (pageEdit ? endEdit() : setPageEdit(true))}
             />
+            {/* Select all, beside Edit (Sean, 2026-08-22). Edit-mode only,
+                because outside it there is no selection for it to mean
+                anything about. It TOGGLES: pressing it with everything
+                already picked clears the lot, which is the gesture people
+                expect from a select-all and saves the trip to Clear. */}
+            {pageEdit && (
+              <CircleBtn
+                testID="recipes-select-all"
+                glyph={allSelected ? '☒' : '☑'}
+                label={allSelected ? 'Select none' : 'Select all'}
+                size={TOPBAR_CTRL}
+                color={allSelected ? T.accent : T.dim}
+                onPress={() => setSelected(allSelected ? [] : selectableIds)}
+              />
+            )}
             <CollapseAllBtn open={!allCollapsed} onPress={collapseAllNotes} />
           </>
         }
@@ -1241,17 +1518,13 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
                       )}
                       {pageEdit && (
                         <>
-                          {/* A date without opening the note — Sean's. Beside
-                              duplicate, and it opens the same mini editor an
-                              existing date chip does. */}
-                          <CircleBtn
-                            testID={`note-date-${n.payload.title}`}
-                            glyph="📅"
-                            label={n.payload.date ? 'Change date' : 'Add a date'}
-                            size={22}
-                            color={n.payload.date ? T.accent : T.dim}
-                            onPress={() => setDateFor(n.id)}
-                          />
+                          {/* NO calendar button. Sean, 2026-08-22: "remove the
+                              calendar icon in edit mode in chefmind". A recipe
+                              is not a dated thing — that is CalMind's job, and
+                              the button was upstream's arriving with the
+                              clone. The date CHIP above stays, so a date that
+                              already exists can still be changed or cleared;
+                              what is gone is the invitation to add one. */}
                           <CircleBtn testID="note-dup" glyph="⧉" label="Duplicate" size={22} onPress={() => {
                             const res = duplicateItem(recs, n.id, newId);
                             if (!('error' in res)) mutate((e) => res.put.forEach((p) => e.put(p)));
@@ -1338,11 +1611,32 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
             <WebHitSlop slop={8} />
             <Text style={s.pickClearText}>Clear</Text>
           </Pressable>
+          {/* Two presses, and the first one turns it red — the suite's
+              delete gesture, in a bar wide enough for the word rather than
+              the round × the rows wear. Sean, 2026-08-22: "next to the add to
+              shopping list should also be a delete button that when tapped
+              turns red to confirm". It sits BEFORE the primary action and in
+              its own colour, so the thumb heading for the accent pill never
+              lands on it. */}
+          <Pressable
+            testID="recipes-delete"
+            accessibilityRole="button"
+            accessibilityLabel={delArmed ? `Confirm deleting ${selected.length}` : `Delete ${selected.length}`}
+            onPress={armOrDelete}
+            style={[s.pickDel, delArmed && s.pickDelArmed]}
+          >
+            <Text style={[s.pickDelText, delArmed && s.pickDelTextArmed]}>
+              {delArmed ? `Delete ${selected.length}?` : 'Delete'}
+            </Text>
+          </Pressable>
           <Pressable testID="recipes-to-shopping" onPress={addSelectedToShopping} style={s.pickGo}>
             <Text style={s.pickGoText}>Add to shopping list</Text>
           </Pressable>
         </View>
       )}
+      {/* Manage variants. A small window, an initially empty list, a + that
+          adds one, and a tapped row that opens into its name field and the
+          card's own sections as checkboxes. Sean, 2026-08-22. */}
       {/* The mini date/time editor: exactly the three controls Sean named —
           remove the date, set it to today, done. Nothing else, because a
           fourth control here is a second date picker nobody asked for and
@@ -1649,9 +1943,50 @@ const s = themed(() => StyleSheet.create({
   pickCount: { color: T.dim, fontSize: 14 },
   pickClear: { paddingHorizontal: 6, paddingVertical: 4 },
   pickClearText: { color: T.muted, fontSize: 14 },
-  pickGo: { marginLeft: 'auto', backgroundColor: T.accent, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 9 },
+  pickDel: {
+    marginLeft: 'auto', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 9,
+    borderWidth: 1, borderColor: T.line,
+  },
+  pickDelArmed: { backgroundColor: T.danger, borderColor: T.danger },
+  pickDelText: { color: T.muted, fontSize: 14, fontWeight: '600' },
+  pickDelTextArmed: { color: '#fff' },
+  // No marginLeft:auto any more — Delete carries it, so the two sit together
+  // at the right rather than one of them floating in the middle.
+  pickGo: { backgroundColor: T.accent, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 9 },
   pickGoText: { color: T.accentInk, fontSize: 14, fontWeight: '700' },
   editDone: { marginLeft: 'auto' },
+  // The variant picker and its menu. The menu is an ordinary block under the
+  // scale row, not an absolute overlay: inside a Scroll an absolutely
+  // positioned menu is clipped by its own row on the web.
+  variantMenu: {
+    marginTop: 6, borderWidth: 1, borderColor: T.line, borderRadius: 10,
+    backgroundColor: T.surface, overflow: 'hidden',
+  },
+  variantOpt: { paddingHorizontal: 12, paddingVertical: 10 },
+  variantOptOn: { backgroundColor: T.accentSoft },
+  variantOptText: { color: T.text, fontSize: 14 },
+  variantOptTextOn: { color: T.accent, fontWeight: '700' },
+  variantEmpty: { color: T.muted, fontSize: 13, lineHeight: 19, padding: 12 },
+  varCard: {
+    width: '100%', maxWidth: 380, maxHeight: '80%', backgroundColor: T.surface,
+    borderRadius: 14, borderWidth: 1, borderColor: T.line, padding: 16, gap: 10,
+  },
+  varHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  varScroll: { paddingBottom: 4 },
+  varRow: { borderTopWidth: 1, borderTopColor: T.lineSoft },
+  varRowHead: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4 },
+  varRowBody: { flex: 1, paddingVertical: 6 },
+  varName: { color: T.text, fontSize: 15 },
+  varCount: { color: T.muted, fontSize: 12, marginTop: 2 },
+  varOpen: { paddingBottom: 10, gap: 8 },
+  varSec: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 6 },
+  varBox: {
+    width: 20, height: 20, borderRadius: 5, borderWidth: 2, borderColor: T.muted,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  varBoxOn: { backgroundColor: T.accent, borderColor: T.accent },
+  varBoxTick: { color: T.accentInk, fontSize: 12, fontWeight: '700', lineHeight: 14 },
+  varSecText: { color: T.text, fontSize: 15, flex: 1 },
   dateChip: { color: T.gold, fontSize: 12, paddingHorizontal: 6 },
   dateBackdrop: { flex: 1, backgroundColor: '#0009', alignItems: 'center', justifyContent: 'center', padding: 24 },
   dateCard: { width: '100%', maxWidth: 340, backgroundColor: T.surface, borderRadius: 14, borderWidth: 1, borderColor: T.line, padding: 16, gap: 12 },

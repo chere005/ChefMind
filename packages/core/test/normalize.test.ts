@@ -4,6 +4,7 @@ import {
   FOLDER_STARTER,
   FOLDER_NOTES_STARTER,
   FOLDER_SHOPPING,
+  FOLDER_PANTRY,
   SECTION_DEFAULT,
 } from '../src/normalize';
 import type { AnyRec, Rec } from '../src/types';
@@ -15,13 +16,17 @@ import type { AnyRec, Rec } from '../src/types';
  * calendar and a habit section. This app has none of those tabs, so seeding
  * them would mean records that sync forever and are never drawn — and a
  * Calendar folder sitting in the Reminders tab that nothing can be filed into.
- * What it pins instead is the shopping list, which is this app's own.
+ * What it pins instead is the shopping list and the pantry, which are this
+ * app's own.
  */
 const folder = (id: string, name: string, app: 'reminders' | 'notes' = 'reminders', ord = 'V'): Rec<'folder'> => ({
   id, type: 'folder', updated: 0, payload: { name, color: '#60a5fa', ord, app },
 });
 const shopFolder = (id: string, ord = 'W'): Rec<'folder'> => ({
   id, type: 'folder', updated: 0, payload: { name: FOLDER_SHOPPING, color: '#f0b429', ord, app: 'reminders', shopping: true },
+});
+const pantryFolder = (id: string, ord = 'X'): Rec<'folder'> => ({
+  id, type: 'folder', updated: 0, payload: { name: FOLDER_PANTRY, color: '#5fb6ac', ord, app: 'reminders', pantry: true },
 });
 const section = (id: string, folderId: string, name = 'S', ord = 'V'): Rec<'section'> => ({
   id, type: 'section', updated: 0, payload: { name, folderId, ord },
@@ -35,14 +40,24 @@ const note = (id: string, folderId: string, sectionId: string): Rec<'note'> => (
 });
 
 describe('normalize — ChefMind’s shape guarantees', () => {
-  it('an empty account grows TWO folders: Recipes’ General and the shopping list', () => {
+  it('an empty account grows THREE folders: Recipes’ General, the shopping list, the pantry', () => {
     const { added } = normalize([]);
     const folders = added.filter((r): r is Rec<'folder'> => r.type === 'folder');
     expect(folders.map((f) => f.payload.name).sort())
-      .toEqual([FOLDER_NOTES_STARTER, FOLDER_SHOPPING].sort());
+      .toEqual([FOLDER_NOTES_STARTER, FOLDER_SHOPPING, FOLDER_PANTRY].sort());
     expect(folders.find((f) => f.payload.name === FOLDER_SHOPPING)!.payload.shopping).toBe(true);
+    expect(folders.find((f) => f.payload.name === FOLDER_PANTRY)!.payload.pantry).toBe(true);
     expect(folders.find((f) => f.payload.name === FOLDER_NOTES_STARTER)!.payload.app).toBe('notes');
-    expect(added.filter((r) => r.type === 'section').length).toBe(2); // one General per folder
+    expect(added.filter((r) => r.type === 'section').length).toBe(3); // one General per folder
+  });
+
+  it('the two flags never land on one folder', () => {
+    // They mean opposite things — a thing to buy and a thing already had — and
+    // a folder wearing both would be counted by every reader on both sides.
+    const { added } = normalize([]);
+    for (const f of added.filter((r): r is Rec<'folder'> => r.type === 'folder')) {
+      expect(f.payload.shopping && f.payload.pantry).toBeFalsy();
+    }
   });
 
   it('and NO folder named Reminders, on any path', () => {
@@ -66,8 +81,25 @@ describe('normalize — ChefMind’s shape guarantees', () => {
       id: 'sf', type: 'folder', updated: 0,
       payload: { name: 'Groceries', color: '#f0b429', ord: 'W', app: 'reminders', shopping: true },
     };
-    const { added } = normalize([folder('f1', 'A'), section('s1', 'f1'), renamed, section('ss', 'sf'), folder('nf', 'N', 'notes'), section('ns', 'nf')]);
+    const { added } = normalize([folder('f1', 'A'), section('s1', 'f1'), renamed, section('ss', 'sf'), pantryFolder('pf'), section('ps', 'pf'), folder('nf', 'N', 'notes'), section('ns', 'nf')]);
     expect(added.filter((r) => r.type === 'folder')).toEqual([]);
+  });
+
+  it('the pantry is permanent too, and renaming IT never makes a second', () => {
+    const renamed: Rec<'folder'> = {
+      id: 'pf', type: 'folder', updated: 0,
+      payload: { name: 'What I have', color: '#5fb6ac', ord: 'X', app: 'reminders', pantry: true },
+    };
+    const { added } = normalize([shopFolder('sf'), section('ss', 'sf'), renamed, section('ps', 'pf'), folder('nf', 'N', 'notes'), section('ns', 'nf')]);
+    expect(added.filter((r) => r.type === 'folder')).toEqual([]);
+  });
+
+  it('the pantry is not folded away as a stray reminders folder', () => {
+    // It IS a reminders folder by `app`, and the migration below tombstones
+    // every general one. Without the flag being excluded there too, the pantry
+    // would be created on one load and demolished on the next, for ever.
+    const { edited } = normalize([...seed()]);
+    expect(edited.filter((r) => r.id === 'seed-pf')).toEqual([]);
   });
 
   /**
@@ -82,7 +114,7 @@ describe('normalize — ChefMind’s shape guarantees', () => {
     // tab whose rows would all be filed onto the shopping list. Here there is
     // no such tab and no such rows: every reminder this app writes IS a
     // shopping row, so the list is the right and only home.
-    const { added } = normalize([shopFolder('sf'), section('ss', 'sf'), folder('nf', 'N', 'notes'), section('ns', 'nf')]);
+    const { added } = normalize([shopFolder('sf'), section('ss', 'sf'), pantryFolder('pf'), section('ps', 'pf'), folder('nf', 'N', 'notes'), section('ns', 'nf')]);
     expect(added.filter((r) => r.type === 'folder')).toEqual([]);
   });
 
@@ -141,6 +173,7 @@ describe('normalize — ChefMind’s shape guarantees', () => {
       folder('rf', 'Rem', 'reminders'), section('rs', 'rf'),
       folder('nf', 'Recipes', 'notes'), section('ns', 'nf'),
       shopFolder('sf'), section('ss', 'sf'),
+      pantryFolder('pf'), section('ps', 'pf'),
       note('n1', 'rf', 'rs'), // filed across apps — must not stand
     ];
     const { edited } = normalize(recs);
@@ -151,6 +184,15 @@ describe('normalize — ChefMind’s shape guarantees', () => {
 
   it('a shopping row stays on the shopping list rather than being re-homed', () => {
     const recs: AnyRec[] = [...seed(), reminder('r1', 'seed-sf', 'seed-ss')];
+    const { edited } = normalize(recs);
+    expect(edited.find((r) => r.id === 'r1')).toBeUndefined();
+  });
+
+  it('a pantry row stays in the pantry', () => {
+    // The rehome pass aims strays at the SHOPPING list — deliberately, since a
+    // stray is something to do and the pantry is a claim about what you have.
+    // A row that is already in the pantry is not a stray and must not move.
+    const recs: AnyRec[] = [...seed(), reminder('r1', 'seed-pf', 'seed-ps')];
     const { edited } = normalize(recs);
     expect(edited.find((r) => r.id === 'r1')).toBeUndefined();
   });
@@ -166,5 +208,6 @@ function seed(): AnyRec[] {
   return [
     folder('seed-nf', FOLDER_NOTES_STARTER, 'notes', 'B'), section('seed-ns', 'seed-nf'),
     shopFolder('seed-sf', 'C'), section('seed-ss', 'seed-sf'),
+    pantryFolder('seed-pf', 'D'), section('seed-ps', 'seed-pf'),
   ];
 }

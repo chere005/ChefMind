@@ -1,9 +1,10 @@
 # Working in ChefMind
 
-CalMind's recipes plus a shopping list, on CalMind's server and CalMind's
-accounts. (Reminders were removed 2026-08-21 on Sean's word — the `reminder`
-record type stays, because the shopping rows are reminder records.) A CLONE of
-CalMind's `apps/app` and `packages/core`. `README.md` is the map.
+CalMind's recipes plus a shopping list and a pantry, on CalMind's server and
+CalMind's accounts. (Reminders were removed 2026-08-21 on Sean's word — the
+`reminder` record type stays, because the shopping AND pantry rows are reminder
+records.) A CLONE of CalMind's `apps/app` and `packages/core`. `README.md` is
+the map.
 
 This was a directory inside the CalMind repo until 2026-08-22, when it was
 extracted — history preserved — into its own repo. The upstream it clones
@@ -15,10 +16,11 @@ through lives THERE, not here.
 - **It is a clone, so keep it one.** A fix that belongs to the product belongs
   upstream in CalMind first and gets copied down — across repos now, which
   makes the copying a deliberate act rather than a shared working tree. The
-  deliberate divergences are written down: `core/shopping.ts` (no twin),
-  `core/normalize.ts` (no calendar or habit starters, plus the shopping
-  folder), the `shopping` flag on `Folder`, and the screens listed in the
-  README's "what was taken out".
+  deliberate divergences are written down: `core/shopping.ts`, `core/units.ts`,
+  `core/grocery.ts` and `core/variant.ts` (no twins upstream),
+  `core/normalize.ts` (no calendar or habit starters, plus the shopping and
+  pantry folders), the `shopping` and `pantry` flags on `Folder`, `variants` on
+  `Note`, and the screens listed in the README's "what was taken out".
 - **The space is not configurable.** `SYNC_SPACE` in `app/src/api.ts` is a
   constant. A build that could be aimed at CalMind's records would merge two
   stores into whichever one synced last, silently.
@@ -103,6 +105,31 @@ failures), and remember the phone's hard cap of 3 installed apps at a time
 (currently CalMind, ChefMind, AcctMind — MyCalMind is deliberately not one of
 them, to stay under that cap).
 
+## The three lists, and the rules they keep
+
+- **A shopping row and a pantry row are both `reminder` records**, in folders
+  wearing the `shopping` and `pantry` flags. One screen renders both
+  (`screens/Shopping.tsx`, `<FlagList kind>`), because the only difference is
+  which flag it reads. `normalize` seeds exactly one folder of each and neither
+  counts as an ordinary reminders folder — miss that second half and the
+  pantry is created on one load and demolished as a stray on the next.
+- **The pantry SUBTRACTS.** Anything on it is left off the shopping list
+  entirely — not added and struck through. The matching lives in
+  `core/shopping.ts` so every route obeys it, and it is on the ingredient NAME:
+  'flour' must never claim 'almond flour'.
+- **Conversion is within a DIMENSION only.** A cup is 236.588 ml by
+  definition, so cups and tablespoons of one thing become one line in
+  millilitres. A cup to a GRAM needs a density that differs per ingredient, so
+  it stays two lines — the original rule, narrowed rather than dropped. See
+  `core/units.ts`.
+- **A row is filed by its ingredient, not by its measure** — otherwise '3
+  cloves garlic' lands in the spice rack. The one exception is `can`/`jar`,
+  which say where a thing is SOLD (`core/grocery.ts`, `ingredientAisle`).
+- **A variant names its sections by TEXT, not by index.** A variant pointing at
+  "the third subheader" would silently mean something else the moment one was
+  added above it. Renaming a subheader detaches it, which is visible; an index
+  would have been silent. `liveSections` drops names the card no longer has.
+
 ## Traps that have cost real time here
 
 - **`space` reaches a filename.** It is whitelisted in `sync_space()` (in
@@ -138,6 +165,19 @@ them, to stay under that cap).
   fails in under a second with "Cannot lock file hash cache … already been
   locked by this process", which reads as a concurrency bug rather than
   wreckage. `./gradlew --stop` and remove `app/android/.gradle`.
+- **A Directions row must be NUMBERED or splitRecipeBody ends the block there.**
+  A test fixture with '- salt' under **Directions** put half the card in
+  `after`, untouched — which read as the variant filter leaking. The parser was
+  right and the fixture was wrong, which is the way round that is easy to miss.
+- **Metro's port is not a constant.** `config.ts` used to spot the dev server
+  by an allow-list of ports (8081, 19006). Start it on any other — because 8081
+  is busy with CalMind's, which is the normal case on this machine — and the
+  app aimed at `http://localhost:<that>/calmind/api/index.php`, got Metro's
+  index.html and reported "server error" on the login card. It matches the
+  HOST now.
+- **`Modal` fades in, so a screenshot taken right after opening one shows it
+  half-transparent.** Two minutes went on "why is the variants window see-
+  through" before the DOM said it was `rgb(26,26,26)` all along.
 - **The shell's working directory persists between Bash calls.** Use absolute
   paths.
 - **Ask what happens when a write fails.** Same rule as upstream: the snapshot

@@ -34,6 +34,10 @@ const C_NOTES = '#7dc2ed';
 // The shopping list's own colour — the palette's gold, which is also the tile
 // this app wears, so the tab and the folder read as the same thing.
 const C_SHOPPING = '#f0b429';
+// The pantry's own colour — the notes sky leaned green, so the three tabs read
+// as three places rather than two and a repeat of one.
+const C_PANTRY = '#5fb6ac';
+export const FOLDER_PANTRY = 'Pantry';
 
 const live = (r: { deleted?: boolean }) => !r.deleted;
 
@@ -49,7 +53,11 @@ export function normalize(recs: AnyRec[]): { added: AnyRec[]; edited: AnyRec[] }
     added.push(r);
     return r;
   };
-  const folder = (name: string, color: string, app: 'reminders' | 'notes', rideAlong = false, after?: string, shopping = false): Rec<'folder'> => {
+  const folder = (
+    name: string, color: string, app: 'reminders' | 'notes',
+    rideAlong = false, after?: string,
+    flag?: 'shopping' | 'pantry',
+  ): Rec<'folder'> => {
     const f: Rec<'folder'> = {
       id: newId(),
       type: 'folder',
@@ -57,7 +65,8 @@ export function normalize(recs: AnyRec[]): { added: AnyRec[]; edited: AnyRec[] }
       payload: {
         name, color, ord: ordBetween(after ?? null, null), app,
         ...(rideAlong ? { rideAlong: true } : {}),
-        ...(shopping ? { shopping: true } : {}),
+        ...(flag === 'shopping' ? { shopping: true } : {}),
+        ...(flag === 'pantry' ? { pantry: true } : {}),
       },
     };
     folders.push(f);
@@ -81,7 +90,7 @@ export function normalize(recs: AnyRec[]): { added: AnyRec[]; edited: AnyRec[] }
    * the rehome pass at the bottom of this function.
    */
   const appFolders = (app: 'reminders' | 'notes') =>
-    folders.filter((f) => folderApp(f.payload) === app && !f.payload.shopping).sort(byRecOrd);
+    folders.filter((f) => folderApp(f.payload) === app && !f.payload.shopping && !f.payload.pantry).sort(byRecOrd);
   // NO general reminders folder. CalMind seeds one because it has a Reminders
   // tab; this app has Recipes and Shopping, and its only reminder records ARE
   // the shopping rows — so the shopping list below is the whole of the
@@ -94,12 +103,22 @@ export function normalize(recs: AnyRec[]): { added: AnyRec[]; edited: AnyRec[] }
   // renaming the folder never makes a second appear.
   if (!folders.some((f) => f.payload.shopping)) {
     const last = appFolders('reminders').slice(-1)[0];
-    folder(FOLDER_SHOPPING, C_SHOPPING, 'reminders', false, last?.payload.ord, true);
+    folder(FOLDER_SHOPPING, C_SHOPPING, 'reminders', false, last?.payload.ord, 'shopping');
+  }
+  // The pantry, on exactly the same terms — the flag is the identity, so an
+  // account that predates it grows one on its next load and renaming the
+  // folder never makes a second appear.
+  if (!folders.some((f) => f.payload.pantry)) {
+    const last = folders.filter((f) => f.payload.shopping).sort(byRecOrd).slice(-1)[0];
+    folder(FOLDER_PANTRY, C_PANTRY, 'reminders', false, last?.payload.ord, 'pantry');
   }
   // The one reminders container this app has. Non-null by construction: the
   // block above just made it if it was missing, and `folder()` pushes into
   // `folders`. The rehome pass used to assert on appFolders('reminders')[0]
   // instead, which is exactly the assertion that would now be empty.
+  // The SHOPPING list, and deliberately not the pantry: a stray reminder is
+  // something to do, and the pantry is a claim about what you already have.
+  // Landing strays there would silently tell the shopping list to skip them.
   const shoppingHome = () => folders.filter((f) => f.payload.shopping).sort(byRecOrd)[0]!;
 
   /**

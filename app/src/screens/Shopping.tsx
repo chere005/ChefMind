@@ -1,20 +1,31 @@
 /**
- * The shopping list (Sean, 2026-08-21).
+ * The shopping list, and the pantry beside it (Sean, 2026-08-21 / 2026-08-22).
  *
- * One flat list, which is what a shopping list is: no folders, no sections, no
- * dates. The rows are ordinary `reminder` records living in the folder that
- * wears the `shopping` flag, so ticking, ordering, deleting and syncing are
- * the machinery every other list in this app already uses — see the flag's own
- * comment in core's types.ts for why it is a flag rather than a third app.
+ * ONE SCREEN, TWO TABS. Both are a flat list of things named in a line of
+ * text, both are ordinary `reminder` records, and the only difference between
+ * them is which folder flag they read — so they are one component taking a
+ * flag rather than two files that have to be kept in step. The pantry is a
+ * list of what you HAVE; the shopping list is what you need. See the `pantry`
+ * flag's own comment in core's types.ts.
  *
- * It fills from the Recipes tab: pick several in edit mode and their
- * ingredients arrive here, combined by core's shoppingLines. Typing straight
- * into the field at the top works too, because the thing you forgot is never
- * in a recipe.
+ * The shopping list fills from the Recipes tab: pick several in edit mode and
+ * their ingredients arrive here, combined by core's shoppingLines — which
+ * leaves out anything already in the pantry. Typing straight into the field at
+ * the top works on both, because the thing you forgot is never in a recipe.
+ *
+ * BY AISLE, not by the order you dragged them (Sean, 2026-08-22: "shopping
+ * should separate ingredients by the categories you might find them in the
+ * grocery store"). A shopping list is walked, so the useful order is the route
+ * through the shop. Dragging still works and still writes `ord` — but the
+ * display sorts by aisle FIRST, so a drag reorders within its own aisle and a
+ * row dragged into another one returns to its own. That is deliberate: the
+ * aisle is derived from what the row says, so moving the row cannot change it,
+ * and pretending otherwise would mean a row that silently snapped back with no
+ * reason given.
  */
 import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { byRecOrd, newId, ordBetween, type Rec } from '@calmind/core';
+import { AISLES, byRecOrd, ingredientAisle, ingredientParts, newId, ordBetween, type Aisle, type Rec } from '@calmind/core';
 import { useStore } from '../store';
 import { themed, T } from '../theme';
 import { TopBar } from '../chrome';
@@ -35,31 +46,85 @@ function moveAt<T>(rows: T[], from: number, to: number): T[] {
   return out;
 }
 
-export function Shopping() {
+/** The aisle a row's text belongs to — its ingredient name and its unit, the
+ *  same two things core files a recipe line by. */
+function aisleOf(text: string): Aisle {
+  const p = ingredientParts(text);
+  return ingredientAisle(p.name || text, p.unit);
+}
+
+const AISLE_INDEX = new Map<Aisle, number>(AISLES.map((a, i) => [a, i]));
+
+type Kind = 'shopping' | 'pantry';
+
+const COPY: Record<Kind, { title: string; add: string; empty: string; prefix: string }> = {
+  shopping: {
+    title: 'Shopping',
+    add: 'Add an item',
+    empty: 'Nothing to buy. Pick recipes in the Recipes tab to fill this in.',
+    prefix: 'shopping',
+  },
+  pantry: {
+    title: 'Pantry',
+    add: 'Add something you have',
+    // Says what the list DOES, because an empty pantry is indistinguishable
+    // from a broken one otherwise — and the consequence (nothing is skipped)
+    // is the thing worth knowing before you go shopping.
+    empty: 'Nothing on hand yet. Anything listed here is left off the shopping list.',
+    prefix: 'pantry',
+  },
+};
+
+export function Shopping() { return <FlagList kind="shopping" />; }
+export function Pantry() { return <FlagList kind="pantry" />; }
+
+function FlagList({ kind }: { kind: Kind }) {
   const { recs, mutate } = useStore();
   const toast = useToast();
+  const copy = COPY[kind];
   const [field, setField] = useState('');
   const [pageEdit, setPageEdit] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
   const swipe = useSwipeLeft();
 
-  const { folder, section, rows } = useMemo(() => {
-    const f = recs.find((r): r is Rec<'folder'> => r.type === 'folder' && !r.deleted && r.payload.shopping === true);
+  const { folder, section, rows, groups } = useMemo(() => {
+    const f = recs.find(
+      (r): r is Rec<'folder'> => r.type === 'folder' && !r.deleted && r.payload[kind] === true,
+    );
     const sec = f
       ? recs.filter((r): r is Rec<'section'> => r.type === 'section' && !r.deleted && r.payload.folderId === f.id).sort(byRecOrd)[0]
       : undefined;
     const list = sec
       ? recs.filter((r): r is Row => r.type === 'reminder' && !r.deleted && r.payload.sectionId === sec.id).sort(byRecOrd)
       : [];
-    return { folder: f, section: sec, rows: list };
-  }, [recs]);
+    // Aisle first, stored order within it. A stable sort is what makes the
+    // second half of that true — Array.prototype.sort has been stable since
+    // ES2019, and the list arrives already sorted by ord.
+    const withAisle = list.map((r) => ({ r, aisle: aisleOf(r.payload.text) }));
+    const ordered = withAisle
+      .slice()
+      .sort((a, b) => (AISLE_INDEX.get(a.aisle) ?? 99) - (AISLE_INDEX.get(b.aisle) ?? 99));
+    // Runs, not a map: the display walks them in order and each needs its
+    // heading drawn once, above the first row that belongs to it.
+    const runs: { aisle: Aisle; rows: Row[] }[] = [];
+    for (const { r, aisle } of ordered) {
+      const last = runs[runs.length - 1];
+      if (last && last.aisle === aisle) last.rows.push(r);
+      else runs.push({ aisle, rows: [r] });
+    }
+    return { folder: f, section: sec, rows: ordered.map((x) => x.r), groups: runs };
+  }, [recs, kind]);
 
   /**
    * Reordering writes a key per row from its new neighbour, walking forward —
    * exactly as the recipes-to-shopping import does, and for the same reason:
    * ordBetween(prev, null) is deterministic, so asking it the same question
    * for every row hands them all one key.
+   *
+   * It runs over the DISPLAY order, which is already aisle-major, so the keys
+   * it writes agree with what is on screen and a drag inside an aisle lands
+   * where it was dropped.
    */
   const drag = useRowDrag(rows.length, (from, to) => {
     swipe.clear();
@@ -117,17 +182,20 @@ export function Shopping() {
     toast(`${ticked.length} cleared.`);
   };
 
+  // The flat display index of a row, which is what the drag hook counts in.
+  const idxOf = (id: string) => rows.findIndex((r) => r.id === id);
+
   return (
     <View style={s.page}>
       <TopBar
-        title="Shopping"
+        title={copy.title}
         controls={
           <>
             {/* Only offered when there IS something ticked: a control that
                 does nothing is a control you learn to distrust. */}
             {ticked.length > 0 && (
               <CircleBtn
-                testID="shopping-clear"
+                testID={`${copy.prefix}-clear`}
                 // NOT '␡'. That codepoint has no glyph in the app's font and
                 // renders as a literal 'DEL' box — seen in the browser the
                 // first time this bar drew.
@@ -139,7 +207,7 @@ export function Shopping() {
               />
             )}
             <CircleBtn
-              testID="shopping-edit"
+              testID={`${copy.prefix}-edit`}
               glyph="✎"
               label={pageEdit ? 'Leave edit mode' : 'Edit mode — reorder'}
               size={TOPBAR_CTRL}
@@ -157,80 +225,89 @@ export function Shopping() {
         >
           <View style={s.addRow}>
             <Field
-              testID="shopping-add"
+              testID={`${copy.prefix}-add`}
               value={field}
               onChangeText={setField}
-              placeholder="Add an item"
+              placeholder={copy.add}
               onSubmitEditing={add}
               style={s.addField}
             />
-            <CircleBtn testID="shopping-add-go" glyph="+" label="Add" color={T.accent} size={26} onPress={add} />
+            <CircleBtn testID={`${copy.prefix}-add-go`} glyph="+" label="Add" color={T.accent} size={26} onPress={add} />
           </View>
 
-          {rows.length === 0 && (
-            <Text style={s.empty}>Nothing to buy. Pick recipes in the Recipes tab to fill this in.</Text>
-          )}
+          {rows.length === 0 && <Text style={s.empty}>{copy.empty}</Text>}
 
-          {rows.map((r, i) => (
-            <View key={r.id}>
-              {drag.slot === i && <View style={s.dropLine} />}
-              <View
-                ref={drag.registerRow(i)}
-                {...(pageEdit ? {} : swipe.handlersFor(r.id))}
-                style={[s.row, drag.dragIdx === i && { opacity: 0.55, transform: [{ translateY: drag.dragDy }] }]}
-              >
-                <View
-                  testID="shopping-grip"
-                  {...(pageEdit ? drag.handleFor(i) : {})}
-                  style={[s.grip, !pageEdit && s.gripHidden]}
-                  pointerEvents={pageEdit ? 'auto' : 'none'}
-                  hitSlop={6}
-                >
-                  <WebHitSlop slop={6} />
-                  <Text style={s.gripText}>≡</Text>
-                </View>
-                <Pressable
-                  testID="shopping-tick"
-                  accessibilityRole="checkbox"
-                  accessibilityState={{ checked: r.payload.done }}
-                  accessibilityLabel={r.payload.text}
-                  onPress={() => { if (!swipe.justSwiped()) tick(r); }}
-                  hitSlop={8}
-                  style={s.boxWrap}
-                >
-                  <WebHitSlop slop={8} />
-                  <View style={[s.box, r.payload.done && s.boxOn]}>
-                    {r.payload.done && <Text style={s.boxTick}>✓</Text>}
+          {groups.map((g) => (
+            <View key={g.aisle}>
+              {/* One heading per run. Drawn even when a single row is under
+                  it: a list where some rows wear an aisle and others do not
+                  reads as a bug rather than as a tidy shortcut. */}
+              <Text testID={`${copy.prefix}-aisle-${g.aisle}`} style={s.aisle}>{g.aisle}</Text>
+              {g.rows.map((r) => {
+                const i = idxOf(r.id);
+                return (
+                  <View key={r.id}>
+                    {drag.slot === i && <View style={s.dropLine} />}
+                    <View
+                      ref={drag.registerRow(i)}
+                      {...(pageEdit ? {} : swipe.handlersFor(r.id))}
+                      style={[s.row, drag.dragIdx === i && { opacity: 0.55, transform: [{ translateY: drag.dragDy }] }]}
+                    >
+                      <View
+                        testID={`${copy.prefix}-grip`}
+                        {...(pageEdit ? drag.handleFor(i) : {})}
+                        style={[s.grip, !pageEdit && s.gripHidden]}
+                        pointerEvents={pageEdit ? 'auto' : 'none'}
+                        hitSlop={6}
+                      >
+                        <WebHitSlop slop={6} />
+                        <Text style={s.gripText}>≡</Text>
+                      </View>
+                      <Pressable
+                        testID={`${copy.prefix}-tick`}
+                        accessibilityRole="checkbox"
+                        accessibilityState={{ checked: r.payload.done }}
+                        accessibilityLabel={r.payload.text}
+                        onPress={() => { if (!swipe.justSwiped()) tick(r); }}
+                        hitSlop={8}
+                        style={s.boxWrap}
+                      >
+                        <WebHitSlop slop={8} />
+                        <View style={[s.box, r.payload.done && s.boxOn]}>
+                          {r.payload.done && <Text style={s.boxTick}>✓</Text>}
+                        </View>
+                      </Pressable>
+                      {editing === r.id ? (
+                        <Field
+                          testID={`${copy.prefix}-edit-field`}
+                          value={editText}
+                          onChangeText={setEditText}
+                          autoFocus
+                          onBlur={() => commitEdit(r)}
+                          onSubmitEditing={() => commitEdit(r)}
+                          style={s.editField}
+                        />
+                      ) : (
+                        <Pressable
+                          testID={`${copy.prefix}-row`}
+                          style={s.rowBody}
+                          onPress={() => {
+                            if (swipe.justSwiped()) return;
+                            if (swipe.swiped) { swipe.clear(); return; }
+                            setEditing(r.id);
+                            setEditText(r.payload.text);
+                          }}
+                        >
+                          <Text style={[s.rowText, r.payload.done && s.rowDone]}>{r.payload.text}</Text>
+                        </Pressable>
+                      )}
+                      {swipe.swiped === r.id && !pageEdit && (
+                        <ConfirmDelete testID={`${copy.prefix}-del`} onDelete={() => { swipe.clear(); mutate((e) => e.del(r.id)); }} />
+                      )}
+                    </View>
                   </View>
-                </Pressable>
-                {editing === r.id ? (
-                  <Field
-                    testID="shopping-edit-field"
-                    value={editText}
-                    onChangeText={setEditText}
-                    autoFocus
-                    onBlur={() => commitEdit(r)}
-                    onSubmitEditing={() => commitEdit(r)}
-                    style={s.editField}
-                  />
-                ) : (
-                  <Pressable
-                    testID="shopping-row"
-                    style={s.rowBody}
-                    onPress={() => {
-                      if (swipe.justSwiped()) return;
-                      if (swipe.swiped) { swipe.clear(); return; }
-                      setEditing(r.id);
-                      setEditText(r.payload.text);
-                    }}
-                  >
-                    <Text style={[s.rowText, r.payload.done && s.rowDone]}>{r.payload.text}</Text>
-                  </Pressable>
-                )}
-                {swipe.swiped === r.id && !pageEdit && (
-                  <ConfirmDelete testID="shopping-del" onDelete={() => { swipe.clear(); mutate((e) => e.del(r.id)); }} />
-                )}
-              </View>
+                );
+              })}
             </View>
           ))}
           {drag.slot === rows.length && <View style={s.dropLine} />}
@@ -248,6 +325,12 @@ const s = themed(() => StyleSheet.create({
   addRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
   addField: { flex: 1 },
   empty: { color: T.muted, fontSize: 14, marginTop: 18, textAlign: 'center', lineHeight: 20 },
+  // Quieter than a row and clearly above one: this is a signpost in a shop,
+  // not a thing to buy, so it must never be mistaken for a line item.
+  aisle: {
+    color: T.dim, fontSize: 11, fontWeight: '700', letterSpacing: 0.8,
+    textTransform: 'uppercase', marginTop: 14, marginBottom: 2, paddingLeft: 2,
+  },
   row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 7, gap: 2 },
   grip: { width: 22, alignItems: 'center' },
   gripHidden: { opacity: 0, width: 0 },

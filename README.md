@@ -1,6 +1,6 @@
 # ChefMind
 
-CalMind's recipes, with a shopping list, syncing through the same
+CalMind's recipes, with a shopping list and a pantry, syncing through the same
 server on the same account. A CLONE of CalMind's `apps/app` and
 `packages/core`, not a rewrite — see `AGENTS.md` for the rules that keep it
 one. Its own repo since 2026-08-22, extracted from
@@ -13,7 +13,8 @@ desktop shell (Tauri), and Windows `.msi`/`.exe` built by CI.
 
 ```
 app/            The Expo app, cloned from CalMind's apps/app.
-packages/core/  The brain, cloned — plus shopping.ts, which has no twin.
+packages/core/  The brain, cloned — plus shopping.ts, units.ts, grocery.ts and
+                variant.ts, which have no twins upstream.
 tools/          The web export's head patch, service worker, the deploy-guard
                 prover, and the dtp/tdtp release lanes.
 deploy.sh       The one deploy: the web client, to production.
@@ -22,20 +23,34 @@ spec/           The behaviour contract, copied so core's suite runs here.
 
 ## What it is
 
-Three tabs: **Recipes · ⊕ · Shopping**.
+Four tabs: **Recipes · Pantry · ⊕ · Shopping**.
 
 - **Recipes** is CalMind's Notes screen, renamed. Only the labels moved — the
   record type is still `note`, the folder's app is still `notes`, and the
   recipe card, the measure badges, the scale row and the photo import are the
   same code CalMind runs. Renaming the data to change a word on screen would be
   a migration for nothing.
+- **Variants** let one card hold several things you might make from it. The
+  Cheese card is four — Ricotta, Mascarpone, Mozzarella, Burrata — sharing a
+  page and a shopping list. A variant is a name plus a set of the card's own
+  subheaders; choosing one from the dropdown beside ½×/1×/2× hides the rest,
+  and everything before the first subheader is shared and always shown.
+  *Manage variants* (the gear) adds, renames, deletes and re-ticks them.
 - **Edit mode** is a top-bar button, and a long press or a double tap on any
-  recipe gets you there too (Sean, 2026-08-21). In it, recipes carry a tick.
+  recipe gets you there too (Sean, 2026-08-21). In it, recipes carry a tick, a
+  **Select all** sits beside the pencil, and the bar at the foot offers
+  *Delete* (two presses, red on the first) beside *Add to shopping list*.
 - **Shopping** is the list those ticks fill. Pick several recipes, press *Add to
-  shopping list*, and their ingredients arrive combined: same thing in the same
-  unit added together, everything else left as written. The rule is
-  `core/shopping.ts`, tested; unit CONVERSION is deliberately not done, because
-  choosing a density for butter is how a shopping list starts inventing numbers.
+  shopping list*, and their ingredients arrive combined and **grouped by aisle**
+  — produce, dairy, meat, dry goods, tins — in the order you walk a shop.
+  Amounts are summed in ONE unit per thing: grams for mass, millilitres for
+  volume, converted exactly. A cup to a tablespoon is a definition and is done;
+  a cup to a gram needs a density that differs per ingredient and is refused,
+  so those stay two lines. `core/shopping.ts` and `core/units.ts`, tested.
+- **Pantry** is what you already have. It is the same screen as Shopping —
+  same rows, same aisles — reading a different folder flag, and it
+  **subtracts**: anything on it is left off the shopping list entirely rather
+  than added and struck through.
 
 ## What was taken out
 

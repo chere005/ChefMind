@@ -1,6 +1,6 @@
 /**
- * The icon-only bottom tab bar: Recipes · Add · Shopping, the
- * middle + a raised accent circle. The active tab wears a fixed circle behind its icon — a
+ * The icon-only bottom tab bar: Recipes · Pantry · Add · Shopping, the
+ * + a raised accent circle. The active tab wears a fixed circle behind its icon — a
  * highlight that can never move the tabs' spacing. The bar's contents cap at
  * the same width as the page column, so on a wide window the tabs stay under
  * the content instead of flying to the edges.
@@ -8,18 +8,23 @@
  * Upstream this has five: the calendar and habits sit either side of the +.
  * ChefMind keeps the shopping list and nothing else — Sean, 2026-08-21:
  * "remove reminders from ChefMind". A cooking app that also held a general
- * reminders list was holding CalMind's job. The + keeps the middle it has
- * everywhere else, so the bar is now three: Recipes, +, Shopping.
+ * reminders list was holding CalMind's job.
+ *
+ * The PANTRY joined it 2026-08-22 (Sean: "add a third tab to chefmind which is
+ * a list of groceries on hand"), so the bar is four. Pantry sits beside
+ * Recipes rather than beside Shopping, even though the two lists are the same
+ * component: they are opposites — what you have and what you need — and
+ * putting them adjacent is how you tap the wrong one.
  *
  * The `reminder` RECORD type stays, and is not a leftover: the shopping rows
  * are reminder records in a folder of their own. What went is the screen.
  */
 import { Pressable, StyleSheet, View , Platform } from 'react-native';
 import { themed, T, PAGE_MAX_WIDTH } from './theme';
-import { BasketIcon, PageIcon } from './components/KindIcons';
+import { BasketIcon, PageIcon, PantryIcon } from './components/KindIcons';
 import { DrawnGlyph } from './ui';
 
-export type Tab = 'notes' | 'add' | 'shopping';
+export type Tab = 'notes' | 'pantry' | 'add' | 'shopping';
 
 // Emoji presentation (VS16) so every glyph draws in colour — the plain-text
 // checkbox was near-invisible on the dark bar.
@@ -30,7 +35,7 @@ export type Tab = 'notes' | 'add' | 'shopping';
 // still say 'notes', because renaming those would be a migration of his data
 // to change a label.
 const TAB_LABEL: Record<Tab, string> = {
-  notes: 'Recipes', add: 'Add', shopping: 'Shopping',
+  notes: 'Recipes', pantry: 'Pantry', add: 'Add', shopping: 'Shopping',
 };
 
 // No icon field: the bar draws its own SVG glyphs by key (see below), and
@@ -38,6 +43,7 @@ const TAB_LABEL: Record<Tab, string> = {
 // a list of icons beside a bar that draws none is a thing to be misread.
 const TABS: { key: Tab }[] = [
   { key: 'notes' },
+  { key: 'pantry' },
   { key: 'add' },
   { key: 'shopping' },
 ];
@@ -61,6 +67,7 @@ export function TabBar({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
               <View style={[s.halo, tab === key && s.haloOn]}>
                 {/* One SVG language for the whole bar — no emoji. */}
                 {key === 'notes' && <PageIcon color={tab === key ? T.text : T.dim} />}
+                {key === 'pantry' && <PantryIcon color={tab === key ? T.text : T.dim} />}
                 {key === 'shopping' && <BasketIcon color={tab === key ? T.text : T.dim} />}
               </View>
             </Pressable>

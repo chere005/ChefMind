@@ -8,7 +8,7 @@ import { ToastProvider } from './src/components/Toast';
 import { TabBar, NavCtx, type Tab } from './src/nav';
 import { Login } from './src/screens/Login';
 import { Notes } from './src/screens/Notes';
-import { Shopping } from './src/screens/Shopping';
+import { Pantry, Shopping } from './src/screens/Shopping';
 import { Add } from './src/screens/Add';
 import { Search } from './src/screens/Search';
 import { themed, currentTheme, onThemeChange, T, THEMES_LIGHT, PAGE_MAX_WIDTH } from './src/theme';
@@ -70,6 +70,7 @@ function Root() {
             />
           )}
           {tab === 'notes' && <Notes openNoteId={noteToOpen} onOpenConsumed={() => setNoteToOpen(null)} />}
+          {tab === 'pantry' && <Pantry />}
           {tab === 'shopping' && <Shopping />}
         </View>
       </View>

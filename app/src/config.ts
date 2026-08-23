@@ -35,7 +35,17 @@ export function defaultServerUrl(): string {
     if (location.protocol === 'tauri:' || location.hostname === 'tauri.localhost') return PROD_API;
     // Metro's own port serves no api/ and never will, so the dev server is
     // the one case that needs an absolute local fallback.
-    if (['8081', '19006'].includes(location.port)) return 'http://127.0.0.1:8788/api/index.php';
+    //
+    // Matched on the HOST, not on a list of ports. It was ['8081', '19006'],
+    // which is exactly as correct as the port you happen to start Metro on:
+    // run it on any other (because 8081 was busy with CalMind's, which is the
+    // normal case on this machine) and the app quietly aimed at
+    // http://localhost:<that>/calmind/api/index.php, got Metro's index.html
+    // back, and reported a server error on the login card. A localhost origin
+    // is the dev case whatever port it is on.
+    if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+      return 'http://127.0.0.1:8788/api/index.php';
+    }
     return `${location.origin}/calmind/api/index.php`;
   }
   return PROD_API;
