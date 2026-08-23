@@ -252,7 +252,7 @@ fi
 
 
 # The page is told how it ended, and with what severity: a live, tagged release
-# whose phone build did not run is not a failure, but it is not a clean 0either.
+# whose phone build did not run is not a failure, but it is not a clean 0 either.
 REPORT_DONE=1
 if [ -n "$RUN_ID" ]; then
   if [ -n "$DEVICE_FAILED" ]; then
