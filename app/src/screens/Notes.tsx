@@ -28,6 +28,7 @@ import { Dropdown } from '../components/Dropdown';
 import { useRowDrag } from '../components/rowdrag';
 import { useSectionDrag, type SectionSlot } from '../components/sectiondrag';
 import { useSwipeLeft } from '../components/swiperow';
+import { PickBar } from '../components/PickBar';
 import { Chevron } from '../components/Chevron';
 import { SyncDot, syncWord } from '../components/SyncDot';
 import { useToast } from '../components/Toast';
@@ -667,34 +668,17 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
   };
 
   /**
-   * Delete every picked recipe, on the second press.
-   *
-   * The same two-press bargain the rows' × makes, and the reason it is not
-   * just a `confirm()`: the suite has no modal confirmations anywhere, and a
-   * control that fills red is both the question and the answer to it. It
-   * disarms itself after 2.5s, so a bar left armed on a screen you walked away
-   * from cannot delete on the next stray tap.
+   * Delete every picked recipe. The two-press bargain that guards it — press
+   * once to arm, press again to confirm, red in between — belongs to PickBar,
+   * which the shopping and pantry lists wear too.
    */
-  const [delArmed, setDelArmed] = useState(false);
-  const delTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const armOrDelete = () => {
-    if (!delArmed) {
-      setDelArmed(true);
-      clearTimeout(delTimer.current);
-      delTimer.current = setTimeout(() => setDelArmed(false), 2500);
-      return;
-    }
-    clearTimeout(delTimer.current);
-    setDelArmed(false);
+  const deleteSelected = () => {
     const ids = selected.slice();
     if (ids.length === 0) return;
     mutate((e) => { for (const id of ids) e.del(id); });
     toast(ids.length === 1 ? 'Recipe deleted.' : `${ids.length} recipes deleted.`);
     endEdit();
   };
-  // Leaving edit mode disarms it: coming back to a bar already showing
-  // "Delete 3?" would be a question about a selection that no longer exists.
-  useEffect(() => { if (!pageEdit) { clearTimeout(delTimer.current); setDelArmed(false); } }, [pageEdit]);
 
   const addSection = (folder: Rec<'folder'>) => {
     const name = newSecName.trim();
@@ -1605,34 +1589,13 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
           appears only when something is chosen, it says how many, and it sits
           where the thumb already is. */}
       {pageEdit && selected.length > 0 && (
-        <View style={s.pickBar}>
-          <Text style={s.pickCount}>{selected.length} selected</Text>
-          <Pressable testID="recipes-clear" onPress={() => setSelected([])} hitSlop={8} style={s.pickClear}>
-            <WebHitSlop slop={8} />
-            <Text style={s.pickClearText}>Clear</Text>
-          </Pressable>
-          {/* Two presses, and the first one turns it red — the suite's
-              delete gesture, in a bar wide enough for the word rather than
-              the round × the rows wear. Sean, 2026-08-22: "next to the add to
-              shopping list should also be a delete button that when tapped
-              turns red to confirm". It sits BEFORE the primary action and in
-              its own colour, so the thumb heading for the accent pill never
-              lands on it. */}
-          <Pressable
-            testID="recipes-delete"
-            accessibilityRole="button"
-            accessibilityLabel={delArmed ? `Confirm deleting ${selected.length}` : `Delete ${selected.length}`}
-            onPress={armOrDelete}
-            style={[s.pickDel, delArmed && s.pickDelArmed]}
-          >
-            <Text style={[s.pickDelText, delArmed && s.pickDelTextArmed]}>
-              {delArmed ? `Delete ${selected.length}?` : 'Delete'}
-            </Text>
-          </Pressable>
-          <Pressable testID="recipes-to-shopping" onPress={addSelectedToShopping} style={s.pickGo}>
-            <Text style={s.pickGoText}>Add to shopping list</Text>
-          </Pressable>
-        </View>
+        <PickBar
+          prefix="recipes"
+          count={selected.length}
+          onClear={() => setSelected([])}
+          onDelete={deleteSelected}
+          action={{ label: 'Add to shopping list', testID: 'recipes-to-shopping', onPress: addSelectedToShopping }}
+        />
       )}
       {/* Manage variants. A small window, an initially empty list, a + that
           adds one, and a tapped row that opens into its name field and the
@@ -1935,23 +1898,6 @@ const s = themed(() => StyleSheet.create({
   // positioned: inside a Modal-free screen it can simply be the last child,
   // and a bar that is part of the layout cannot end up under the home
   // indicator the way an absolute one does.
-  pickBar: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    paddingHorizontal: 12, paddingVertical: 10,
-    borderTopWidth: 1, borderTopColor: T.line, backgroundColor: T.surface,
-  },
-  pickCount: { color: T.dim, fontSize: 14 },
-  pickClear: { paddingHorizontal: 6, paddingVertical: 4 },
-  pickClearText: { color: T.muted, fontSize: 14 },
-  pickDel: {
-    marginLeft: 'auto', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 9,
-    borderWidth: 1, borderColor: T.line,
-  },
-  pickDelArmed: { backgroundColor: T.danger, borderColor: T.danger },
-  pickDelText: { color: T.muted, fontSize: 14, fontWeight: '600' },
-  pickDelTextArmed: { color: '#fff' },
-  // No marginLeft:auto any more — Delete carries it, so the two sit together
-  // at the right rather than one of them floating in the middle.
   pickGo: { backgroundColor: T.accent, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 9 },
   pickGoText: { color: T.accentInk, fontSize: 14, fontWeight: '700' },
   editDone: { marginLeft: 'auto' },

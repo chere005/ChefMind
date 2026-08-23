@@ -51,6 +51,16 @@ Four tabs: **Recipes · Pantry · ⊕ · Shopping**.
   same rows, same aisles — reading a different folder flag, and it
   **subtracts**: anything on it is left off the shopping list entirely rather
   than added and struck through.
+- **Edit mode on both lists** is the Recipes tab's, on the same bar. *Select
+  all* sits beside the pencil and is the way IN — it arrives in edit mode with
+  everything picked — the tick boxes become round select circles while you are
+  there, and the foot of the screen offers *Delete* (two presses, red on the
+  first) beside **Refresh**. Refresh combines what is alike harder than the
+  list could when the rows arrived from different places: plurals and
+  preparation words folded together, a bracketed metric measure preferred to
+  the cook's own — `2 cups (250 g) flour` counts as 250 g — and cups summed
+  with tablespoons. It still will not turn a cup into a gram, because that
+  needs a density (`core/shopping.ts`, `recombineLines`, tested).
 
 ## What was taken out
 

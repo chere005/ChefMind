@@ -183,6 +183,14 @@ them, to stay under that cap).
 - **A row is filed by its ingredient, not by its measure** — otherwise '3
   cloves garlic' lands in the spice rack. The one exception is `can`/`jar`,
   which say where a thing is SOLD (`core/grocery.ts`, `ingredientAisle`).
+- **Refresh is a LOOSER match, never a looser conversion.** `recombineLines`
+  folds plurals and preparation words ('chopped onions' meets 'onion'),
+  prefers a bracketed metric measure to the cook's own, and keeps the shortest
+  of the names it merged. What it must never start doing is crossing mass with
+  volume — the dimension rule above is the one thing 'additional effort' was
+  not a licence to relax, and the prep-word list is deliberately short for the
+  same reason: 'dried', 'ground' and 'whole' name a different thing on the
+  shelf, so they stay.
 - **A variant names its sections by TEXT, not by index.** A variant pointing at
   "the third subheader" would silently mean something else the moment one was
   added above it. Renaming a subheader detaches it, which is visible; an index
