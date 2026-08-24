@@ -93,6 +93,12 @@ through lives THERE, not here.
   because this app and CalMind share one origin and would otherwise share one
   localStorage key.
 
+- **The lane ends non-zero when a device build is owed.** The release still
+  shipped — live, tagged, status card closed `ok` severity 2 — but a run that
+  skipped a build for want of a phone must not hand back a clean 0, or "it all
+  worked" gets read off an exit status that never checked. CoreMind's batch
+  catches it and still ships every repo after this one.
+
 ## Development
 
 - **Tests**: `npm run test` (→ `npm run test:core`) runs `packages/core`'s
