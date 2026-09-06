@@ -358,7 +358,7 @@ function FlagList({ kind }: { kind: Kind }) {
                     <View
                       ref={drag.registerRow(i)}
                       {...(pageEdit ? {} : swipe.handlersFor(r.id))}
-                      style={[s.row, drag.dragIdx === i && { opacity: 0.55, transform: [{ translateY: drag.dragDy }] }]}
+                      style={[s.row, s.rowNoSelect, drag.dragIdx === i && { opacity: 0.55, transform: [{ translateY: drag.dragDy }] }]}
                     >
                       <View
                         testID={`${copy.prefix}-grip`}
@@ -461,6 +461,8 @@ const s = themed(() => StyleSheet.create({
     textTransform: 'uppercase', marginTop: 14, marginBottom: 2, paddingLeft: 2,
   },
   row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 7, gap: 2 },
+  /* a swipe row permits only VERTICAL panning, so a horizontal swipe never scrolls the list under it on web — Sean, 2026-09-06 */
+  rowNoSelect: { userSelect: 'none', touchAction: 'pan-y' } as import('react-native').ViewStyle,
   grip: { width: 22, alignItems: 'center' },
   gripHidden: { opacity: 0, width: 0 },
   gripText: { color: T.muted, fontSize: 16 },
