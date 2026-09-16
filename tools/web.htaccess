@@ -27,43 +27,20 @@
   Header set Cache-Control "no-cache"
 </Files>
 
-# The public meeting-request page (Sean, 2026-08-19): /request is the SPA at
-# a second path — a link to hand out, deliberately absent from the app's own
-# navigation. The app decides what to render from location.pathname; the
-# rewrite only has to serve the same index.html there. e2e/router.php does
-# the equivalent for the local harness.
-RewriteEngine On
-# The trailing slash is in the pattern because App.tsx accepts it
-# (/\/request\/?$/) and the two disagreeing means /calmind/request/ 404s while
-# /calmind/request serves — the kind of difference nobody debugs, they just
-# conclude the link is dead.
-RewriteRule ^request/?$ index.html [L]
-
-# ── Host routing, and it has to live HERE ───────────────────────────────────
+# NO HOST ROUTING HERE — and it was here, and it took the sandbox down.
 #
-# The site's root .htaccess maps test.seancheren.com/X to /test/X. That rule
-# does NOT reach this directory: the presence of THIS FILE gives
-# /home/public/calmind its own per-directory config, and mod_rewrite does not
-# apply a parent's rules where a child has its own. So the subdomains were
-# being served PROD's directory — identical bundles, so nothing looked wrong,
-# until a signup on test.seancheren.com created its account in prod's store.
+# This file began as a copy of CalMind's web.htaccess, which carries CalMind's
+# subdomain routing: on a `test.` host, rewrite everything under this
+# directory to /test/calmind/. That block is CalMind's — it exists so
+# /home/public/calmind's own per-directory config re-applies the site's
+# test→/test/ mapping for CalMind's OWN path. In ChefMind's directory it was
+# dead code on the apex (the host never matches) and a live wrong answer on
+# test.seancheren.com: every request under /ChefMind was served CalMind's
+# index.html and CalMind's bundle, while TestChefMind's files sat correctly on
+# disk beside it. Found by TestChefMind's first qdtp, 2026-09-15 — the
+# served-page proof said "that is not TestChefMind's page", and it was right.
 #
-# Deployed to all three instances, so it must be a no-op in two of them. The
-# !^/test/ guard is what does that: under /home/public/test/calmind the
-# request URI already starts with /test/, so the rule skips rather than
-# rewriting to itself for ever.
-RewriteEngine On
-
-RewriteCond %{HTTP_HOST} ^test\. [NC]
-RewriteCond %{REQUEST_URI} !^/test/
-RewriteRule ^(.*)$ /test/calmind/$1 [L]
-
-RewriteCond %{HTTP_HOST} ^dev\. [NC]
-RewriteCond %{REQUEST_URI} !^/dev/
-RewriteRule ^(.*)$ /dev/calmind/$1 [L]
-
-# …and on the APEX, /test/ and /dev/ are gone (Sean: "it should just stop
-# working"). Not a redirect — a 404. seancheren.com is prod and nothing else.
-RewriteCond %{HTTP_HOST} !^(test|dev)\. [NC]
-RewriteCond %{REQUEST_URI} ^/(test|dev)/
-RewriteRule ^ - [R=404,L]
+# The site's root .htaccess already maps test.seancheren.com/ChefMind to
+# /test/ChefMind before this file is consulted, so this directory needs no
+# routing of its own; only the cache rules above. (ChefMind's production copy
+# still carries the CalMind block — harmless there, latent everywhere else.)
