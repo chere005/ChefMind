@@ -98,6 +98,156 @@ function looseNameKey(name: string): string {
   return (kept.length > 0 ? kept : words).join(' ');
 }
 
+/**
+ * THE QUANTITIES A COOK WRITES IN WORDS, and the articles around them.
+ *
+ * Sean, 2026-09-18: "if i have salt in the pantry, and it calls for a pinch
+ * of salt or some amount of salt, it shouldn't go on the shopping list."
+ *
+ * A measure written as a number gets taken off the name by the parser — '1
+ * tsp salt' has always been name 'salt', and has always been skipped. One
+ * written in words does not: `ingredientParts('a pinch of salt')` answers a
+ * name of 'a pinch of salt', which is the honest reading of a line with no
+ * quantity in it, and which no pantry row will ever equal.
+ *
+ * So these come off the FRONT, and only off the front. A word that turns up
+ * later in a name is part of the name — 'chocolate drops' is a thing to buy,
+ * and eating the 'drops' off it would leave a pantry row for chocolate
+ * claiming it.
+ */
+const VAGUE_WORDS = new Set([
+  'a', 'an', 'some', 'few', 'little', 'couple', 'of',
+  'pinch', 'pinches', 'dash', 'dashes', 'splash', 'splashes', 'drizzle', 'drizzles',
+  'sprinkle', 'sprinkling', 'handful', 'handfuls', 'knob', 'knobs', 'glug', 'glugs',
+  'squeeze', 'squeezes', 'drop', 'drops', 'sprig', 'sprigs', 'bunch', 'bunches',
+  'scant', 'heaping', 'heaped', 'generous',
+]);
+
+/**
+ * What a cook writes AFTER an ingredient about when to use it.
+ *
+ * 'Salt to taste' and 'oil for frying' are the same salt and the same oil.
+ * The comma form ('sea salt, to taste') is already handled by `bareName` —
+ * everything after a comma is a note to the cook — and this is the same note
+ * written without one.
+ */
+const USE_TAIL = /\s*\b(?:to taste|as needed|if needed|as required|divided|optional|for (?:serving|garnish|garnishing|frying|greasing|dusting|drizzling|brushing|topping|the pan))\b\s*\.?\s*$/i;
+
+/**
+ * A MEASURE still sitting in the name, because the line said it twice.
+ *
+ * '1/3 cup (70 grams) + 1 tablespoon granulated sugar' is a real line from a
+ * real recipe: the parser takes the FIRST measure off, the bracketed one is
+ * an aside, and what is left over as the name begins '1 tablespoon'. Seen on
+ * Sean's list, 2026-09-18, sitting under a pantry that had sugar in it.
+ *
+ * Singular forms only — the key is singularised before this is asked.
+ */
+const MEASURE_WORDS = new Set([
+  'g', 'gram', 'kg', 'kilogram', 'ml', 'milliliter', 'millilitre', 'l', 'liter', 'litre',
+  'tsp', 'teaspoon', 'tbsp', 'tablespoon', 'oz', 'ounce', 'lb', 'pound',
+  'cup', 'clove', 'can', 'gal', 'gallon', 'qt', 'quart', 'pt', 'pint',
+  'stick', 'slice', 'packet', 'package', 'pkg', 'jar', 'bottle', 'box', 'bag', 'tin',
+]);
+
+/** Is this word an amount rather than a thing? A number, a measure, or one of
+ *  the measures a cook writes in words. */
+const isAmountWord = (w: string): boolean =>
+  /^\d/.test(w) || MEASURE_WORDS.has(w) || VAGUE_WORDS.has(w);
+
+/**
+ * WHICH KIND OF THE SAME THING — Sean, 2026-09-18: "i have sugar in my pantry
+ * yet these both showed up", of a list carrying three lines of granulated
+ * sugar and two of all purpose flour.
+ *
+ * A word on this list narrows a staple without changing what you come home
+ * with: granulated sugar IS the sugar in the cupboard, and all purpose flour
+ * IS the flour. So the pantry reads past them, on BOTH sides — a cupboard
+ * holding granulated sugar holds sugar too.
+ *
+ * WHAT IS DELIBERATELY NOT HERE is the whole point, and it is the same rule
+ * the loose match keeps from the other side: almond, coconut, oat, rice,
+ * whole wheat, powdered, confectioners, brown, dark, white — every one of
+ * those names a DIFFERENT BAG on the shelf, and a pantry row for flour that
+ * claimed almond flour would send you home without the thing the recipe is
+ * made of. Colour words especially: white sugar is granulated sugar, but
+ * white wine is not red wine, and one list cannot tell those apart.
+ */
+const VARIETY_WORDS = new Set([
+  'granulated', 'table', 'fine', 'superfine', 'coarse', 'flaky', 'plain',
+  'regular', 'ordinary', 'standard', 'pure', 'unbleached',
+  'all', 'purpose', 'allpurpose', 'kosher', 'sea', 'iodized', 'iodised',
+]);
+
+/**
+ * A PART of a staple that having the staple covers — Sean, same day: "things
+ * like egg yolk should realize i already have eggs".
+ *
+ * A table rather than a rule, and short on purpose. 'Yolk' and 'white' are
+ * the two words a recipe uses for half an egg, and 'white' is exactly the
+ * word a general rule must not be allowed to drop (see above). Naming the
+ * two pairs outright is what buys the egg case without buying the wine one.
+ */
+const PART_OF: Record<string, string> = {
+  'egg yolk': 'egg',
+  'egg white': 'egg',
+};
+
+/**
+ * The name as the PANTRY reads it: the thing itself, with the measure a cook
+ * wrote in words and the note about when to use it taken off.
+ *
+ * Deliberately more forgiving than `nameKey` about AMOUNTS and MOMENTS, and
+ * no more forgiving than `looseNameKey` about what a thing IS.
+ */
+export function pantryKey(name: string): string {
+  const bare = bareName(name).replace(USE_TAIL, '').trim();
+  const words = nameKey(bare).split(' ').filter(Boolean).map((w) => singularOf(w));
+  // Only off the FRONT: a word that turns up later is part of the name —
+  // 'chocolate drops' is a thing to buy, and eating the 'drops' off it would
+  // let a pantry row for chocolate claim it.
+  let i = 0;
+  while (i < words.length && isAmountWord(words[i] as string)) i++;
+  const kept = words.slice(i).filter((w) => !PREP_WORDS.has(w));
+  // Never reduce a name to nothing — `looseNameKey`'s rule, for its reason: a
+  // row that says only 'a pinch' says 'a pinch', and a pantry that matched
+  // everything emptied to '' would empty the whole list.
+  return (kept.length > 0 ? kept : words).join(' ');
+}
+
+/**
+ * The STAPLE a key names: the same thing with the kind of it taken off.
+ *
+ * What the pantry actually compares, on both sides. `pantryKey` answers what
+ * the line says; this answers what is in the cupboard when it is true.
+ */
+function staple(key: string): string {
+  const words = key.split(' ').filter(Boolean);
+  const kept = words.filter((w) => !VARIETY_WORDS.has(w));
+  const bare = (kept.length > 0 ? kept : words).join(' ');
+  return PART_OF[bare] ?? bare;
+}
+
+/**
+ * Is this line's ingredient already on hand?
+ *
+ * The 'and' case is here because a recipe writes 'salt and pepper to taste'
+ * far more often than it writes either alone. It goes only when EVERY thing
+ * it names is in the pantry — half a line cannot be crossed off, so a cook
+ * with salt and no pepper still gets the line, whole, and still buys pepper.
+ *
+ * The split is deliberately one-way. A PANTRY row saying 'macaroni and
+ * cheese' is one box and does not put cheese on hand; a recipe line saying
+ * 'salt and pepper' is two things and needs both.
+ */
+function onHand(have: ReadonlySet<string>, name: string): boolean {
+  const key = staple(pantryKey(name));
+  if (key === '') return false;
+  if (have.has(key)) return true;
+  const parts = key.split(/\s+and\s+/).filter(Boolean).map(staple);
+  return parts.length > 1 && parts.every((part) => have.has(part));
+}
+
 /** A name with its bracketed aside and its comma tail taken off — what the
  *  loose match compares, and what it puts on the list. */
 function bareName(name: string): string {
@@ -180,13 +330,59 @@ export function recombineLines(texts: string[]): string[] {
   return shoppingEntries([{ title: null, ingredients: texts }], [], true).map((e) => e.text);
 }
 
+/**
+ * Fold new lines into a list that is already there.
+ *
+ * Sean, 2026-09-18: "duplicate ingredients i don't have in my pantry should
+ * always be combined automatically" — of a list carrying two lines of all
+ * purpose flour, one from each of two recipes added minutes apart. A single
+ * add has always combined within itself; what it could not do was see the
+ * list it was landing on.
+ *
+ * THE TEST FOR "the same thing" is the combine itself: hand `recombineLines`
+ * the two and see whether it gives one back. A separate opinion about what a
+ * name means, kept beside the arithmetic that acts on it, is two rules that
+ * eventually disagree.
+ *
+ * `kept` comes back the SAME LENGTH and in the same order as `existing`, with
+ * only the entries that absorbed something rewritten — the caller has rows
+ * with ids, an order somebody dragged them into and wording they may have
+ * edited, and none of that survives being rebuilt from a list of strings.
+ */
+export function mergeIntoList(existing: readonly string[], incoming: readonly string[]): {
+  kept: string[];
+  /** What nothing on the list could take, combined among themselves. */
+  added: string[];
+} {
+  const kept = existing.slice();
+  const fresh: string[] = [];
+  for (const line of incoming) {
+    // Against the CURRENT text, so a second line can fold into a row the
+    // first one already changed — two recipes each wanting butter.
+    const at = kept.findIndex((t) => recombineLines([t, line]).length === 1);
+    if (at < 0) { fresh.push(line); continue; }
+    const [combined] = recombineLines([kept[at] as string, line]);
+    if (combined !== undefined) kept[at] = combined;
+  }
+  // The leftovers meet each other too: `shoppingLines` combined them on the
+  // STRICT reading, and 'onion' beside 'chopped onions' only meets on the
+  // loose one — which is the reading every line above just had.
+  return { kept, added: recombineLines(fresh) };
+}
+
 function shoppingEntries(
   sources: ShoppingSource[],
   pantry: string[],
   loose = false,
 ): { text: string; name: string; aisle: Aisle }[] {
   const keyOfName = loose ? looseNameKey : nameKey;
-  const have = new Set(pantry.map((p) => keyOfName(ingredientParts(p).name || p)).filter(Boolean));
+  // The pantry reads names its OWN way, the same way in both passes: whether
+  // two lines of a list combine and whether a cupboard already holds one of
+  // them are different questions, and the second one has to survive '1 tsp',
+  // 'a pinch of' and 'to taste' alike.
+  const have = new Set(
+    pantry.map((p) => staple(pantryKey(ingredientParts(p).name || p))).filter(Boolean),
+  );
   // Insertion-ordered, which is what Map guarantees and a plain object does
   // not for numeric-looking keys.
   const seen = new Map<string, Entry>();
@@ -206,7 +402,7 @@ function shoppingEntries(
       const unit = (aside?.unit ?? p.unit)?.toLowerCase() ?? null;
       const name = loose ? bareName(p.name) : p.name.trim();
       const nk = keyOfName(name);
-      if (nk !== '' && have.has(nk)) continue;   // already in the pantry
+      if (have.size > 0 && onHand(have, name)) continue;   // already in the pantry
       const dim = unitDimension(unit);
       // The key is what "the same thing" means. Case-folded; the DIMENSION
       // counts rather than the unit, so cups and tablespoons of the same

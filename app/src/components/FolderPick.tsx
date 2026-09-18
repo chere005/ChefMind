@@ -56,21 +56,62 @@ export function useFolderView(app: 'reminders' | 'notes'): FolderView {
   }, [recs, sharedRecs, sharedPartner, app]);
 }
 
-export function FolderPick({ app }: { app: 'reminders' | 'notes' }) {
-  const { recs, mutate, sharedPartnerLabel } = useStore();
-  const { view, hidden, folders, visible, sharedFolders, hiddenShared, sharedPartner, sharedView } = useFolderView(app);
-  const [open, setOpen] = useState(false);
-  const [manage, setManage] = useState(false);
-
+/**
+ * The picker's FACE, on its own — one folder shows its colour, several show
+ * the pie, everything on shows the rainbow.
+ *
+ * Split out when the picker left the top bar for the username menu (Sean,
+ * 2026-09-16, ChefMind only): the menu row still wants the dot, because "a
+ * pie" and "one blue" answer "which folder am I looking at" before the row
+ * is read, and that was the whole point of the ring it replaces. The
+ * selection logic is NOT duplicated to get it — both this and the picker
+ * read the one `useFolderView`.
+ */
+export function FolderDot({ app, size = 14 }: { app: 'reminders' | 'notes'; size?: number }) {
+  const { view, hidden, folders, visible, hiddenShared } = useFolderView(app);
   const active = folders.find((f) => f.id === view);
+  return (
+    <PieDot
+      rainbow={!active && hidden.length === 0 && hiddenShared.length === 0}
+      colors={active ? [active.payload.color] : visible.map((f) => f.payload.color)}
+      size={size}
+    />
+  );
+}
+
+export function FolderPick({ app, open: openProp, onClose, button = true }: {
+  app: 'reminders' | 'notes';
+  /**
+   * Driven from OUTSIDE — the username menu's Folders row — instead of by a
+   * button of its own. Leave both off and it behaves as it always did.
+   */
+  open?: boolean | undefined;
+  onClose?: (() => void) | undefined;
+  /** Draw the ringed dot that opens it. False when the menu opens it. */
+  button?: boolean;
+}) {
+  const { recs, mutate, sharedPartnerLabel } = useStore();
+  const { view, hidden, folders, sharedFolders, hiddenShared, sharedPartner, sharedView } = useFolderView(app);
+  const [selfOpen, setSelfOpen] = useState(false);
+  const [manage, setManage] = useState(false);
+  // Controlled when a parent passes `open`, uncontrolled otherwise — and the
+  // close path has to satisfy BOTH, because the menu's copy owns the flag
+  // while its own button's copy owns the state.
+  const open = openProp ?? selfOpen;
+  const setOpen = (next: boolean) => {
+    setSelfOpen(next);
+    if (!next) onClose?.();
+  };
+
   const setPrefs = (next: Parameters<typeof prefsPut>[2]) => mutate((e) => e.put(prefsPut(recs, app, next)));
 
   return (
     <>
-      <Pressable testID={`pick-${app}`} style={pickHit} onPress={() => setOpen(true)} hitSlop={8}>
-        {/* One folder = its colour; several = the pie; everything on = the rainbow. */}
-        <PieDot rainbow={!active && hidden.length === 0 && hiddenShared.length === 0} colors={active ? [active.payload.color] : visible.map((f) => f.payload.color)} size={16} />
-      </Pressable>
+      {button && (
+        <Pressable testID={`pick-${app}`} style={pickHit} onPress={() => setOpen(true)} hitSlop={8}>
+          <FolderDot app={app} size={16} />
+        </Pressable>
+      )}
 
       {open && (
         <Modal transparent animationType="fade" onRequestClose={() => setOpen(false)}>

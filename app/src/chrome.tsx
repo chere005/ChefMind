@@ -1,9 +1,14 @@
 /**
  * The shared chrome — the suite's rule made a component: the top bar is one
  * row, in the same place in every app: the app's name on the left; on the
- * right the screen's own controls, then the sync status dot (green online,
- * yellow offline), then the folder picker slot, then the username — whose tap
- * opens Settings. Every screen gets Settings for free.
+ * right the screen's own controls, then the folder picker slot, then the
+ * username — whose tap opens the menu. Every screen gets it for free.
+ *
+ * WHAT IS IN THE MENU RATHER THAN THE ROW (Sean, 2026-09-16): Search and Show
+ * completed were both circles in the bar. Search is a door, not a state, and
+ * Completed is a setting you change a few times a week — neither earns a
+ * permanent 32pt hole beside the app's name, and with the collapse-all gone
+ * too the row is back to what the screen IS plus where it is pointed.
  */
 import React, { useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -25,7 +30,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 export function TopBar({
   title,
   controls,
-  completed,
+  folders,
+  showCompleted,
+  onToggleCompleted,
   copyMarkdown,
   picker,
 }: {
@@ -41,10 +48,30 @@ export function TopBar({
    * fill a menu row nobody has opened is work for nothing.
    */
   copyMarkdown?: () => string;
-  /** The show-completed toggle, between collapse-all and the folder picker.
-   *  Sean's placement, 2026-08-12: it used to sit in a toolbar row under the
-   *  divider, which is a second row of controls for one button. */
-  completed?: React.ReactNode;
+  /**
+   * Whether this screen is SHOWING finished items, or undefined on a screen
+   * that has no such idea. The pair is what the menu row is made of: a state
+   * to draw a box from and a handler to flip it. It was a ☑ circle in the bar
+   * until 2026-09-16; the bar is for the screen, and this is a preference
+   * about what the screen shows.
+   */
+  /**
+   * The folder picker, as a MENU ROW rather than a ring in the bar (Sean,
+   * 2026-09-16, ChefMind only). `dot` is the picker's own face — the pie
+   * that says which folder you are looking at before the row is read, which
+   * was the whole point of the ring it replaces — and `onOpen` raises the
+   * picker's card, which the screen renders for itself.
+   */
+  folders?: { dot: React.ReactNode; onOpen: () => void } | undefined;
+  showCompleted?: boolean | undefined;
+  onToggleCompleted?: (() => void) | undefined;
+  /**
+   * The bar's picker slot. NOTHING in ChefMind passes it any more — the
+   * folder picker is a menu row (see `folders`) — but the slot stays,
+   * because this chrome is a fork of CalMind's, upstream still fills it, and
+   * a prop deleted on one side is a diff that has to be re-read every time
+   * the two are compared.
+   */
   picker?: React.ReactNode;
 }) {
   const nav = useNav();
@@ -114,15 +141,8 @@ export function TopBar({
           <Text style={s.appname} numberOfLines={1}>{title}</Text>
         </View>
         <View style={s.right}>
-          {/* Completed FIRST, then collapse-all — Sean swapped them
-              2026-08-12, having seen the two side by side. */}
-          {completed}
           {controls}
           {picker && <View style={s.pickerRing}>{picker}</View>}
-          {/* Search, to the left of the username and the right of the folder
-              picker — Sean's placement, 2026-08-19. One screen for all
-              three kinds, so it lives in the shared bar, not on a tab. */}
-          <CircleBtn testID="topbar-search" glyph="🔍" size={TOPBAR_CTRL} label="Search" onPress={nav.openSearch} />
           {/* The account button, and the STATUS INDICATOR in one control.
               Sean, 2026-08-12: same size as every other button, the
               username's first letter as its icon, and "the color of the
@@ -179,26 +199,26 @@ export function TopBar({
                   : { top: insets.top + 52, right: 16 },
               ]}
             >
-              {copyMarkdown && (
-                <Pressable
-                  testID="menu-copymd"
-                  style={s.menuRow}
-                  onPress={() => {
-                    setMenuOpen(false);
-                    // Say something either way. A refusal — a browser that
-                    // will not hand the clipboard to a page it thinks is
-                    // unfocused — used to be swallowed whole, and a button
-                    // with no answer is a button you press twice.
-                    Clipboard.setStringAsync(copyMarkdown())
-                      .then(() => toast('Copied as Markdown'))
-                      .catch(() => toast('Could not copy'));
-                  }}
-                >
-                  <Text style={s.menuText}>Copy as Markdown</Text>
-                </Pressable>
-              )}
+              {/* THE ORDER (Sean, 2026-09-16): Settings at the top, always,
+                  always followed by Search — the two rows that are on every
+                  screen of every app, so the hand learns one place for them.
+                  The rows that come and go (Copy as Markdown, Show
+                  completed) sit at the FOOT, above Log out, where their
+                  appearing and disappearing cannot shuffle anything above
+                  them. */}
               <Pressable style={s.menuRow} onPress={() => { setMenuOpen(false); setSettingsOpen(true); }}>
                 <Text style={s.menuText}>Settings</Text>
+              </Pressable>
+              {/* Search: the only row that LEAVES this screen for another,
+                  which is why it sits with Settings at the fixed head rather
+                  than among the rows that come and go. It was the bar's own
+                  circle until 2026-09-16. */}
+              <Pressable
+                testID="menu-search"
+                style={s.menuRow}
+                onPress={() => { setMenuOpen(false); nav.openSearch(); }}
+              >
+                <Text style={s.menuText}>Search</Text>
               </Pressable>
               {/* Sean, 2026-08-11. It says what came BACK rather than just
                   closing: the deleted thing is by definition not on screen,
@@ -218,6 +238,52 @@ export function TopBar({
               >
                 <Text style={s.menuText}>Undo last delete</Text>
               </Pressable>
+              {folders && (
+                <Pressable
+                  testID="menu-folders"
+                  style={s.menuRow}
+                  onPress={() => { setMenuOpen(false); folders.onOpen(); }}
+                >
+                  <View style={s.menuRowInner}>
+                    {folders.dot}
+                    <Text style={s.menuText}>Folders</Text>
+                  </View>
+                </Pressable>
+              )}
+              {copyMarkdown && (
+                <Pressable
+                  testID="menu-copymd"
+                  style={s.menuRow}
+                  onPress={() => {
+                    setMenuOpen(false);
+                    // Say something either way. A refusal — a browser that
+                    // will not hand the clipboard to a page it thinks is
+                    // unfocused — used to be swallowed whole, and a button
+                    // with no answer is a button you press twice.
+                    Clipboard.setStringAsync(copyMarkdown())
+                      .then(() => toast('Copied as Markdown'))
+                      .catch(() => toast('Could not copy'));
+                  }}
+                >
+                  <Text style={s.menuText}>Copy as Markdown</Text>
+                </Pressable>
+              )}
+              {/* The show-completed toggle, drawn as the box it used to be so
+                  the state is still readable at a glance. The menu SHUTS on
+                  the press: leaving it open over a list that just changed
+                  length hides the thing you asked to see. */}
+              {onToggleCompleted && (
+                <Pressable
+                  testID="menu-completed"
+                  style={s.menuRow}
+                  onPress={() => { setMenuOpen(false); onToggleCompleted(); }}
+                >
+                  <View style={s.menuRowInner}>
+                    <Text style={[s.menuBox, showCompleted && s.menuBoxOn]}>{showCompleted ? '☑' : '☐'}</Text>
+                    <Text style={s.menuText}>Show completed</Text>
+                  </View>
+                </Pressable>
+              )}
               <Pressable
                 style={s.menuRow}
                 onPress={async () => {
@@ -288,5 +354,11 @@ const s = themed(() => StyleSheet.create({
     paddingVertical: 4,
   },
   menuRow: { paddingHorizontal: 16, paddingVertical: 11 },
+  /** A row's label and its box side by side — an INNER view rather than
+   *  flexDirection on menuRow itself, which would re-lay-out every row. */
+  menuRowInner: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   menuText: { color: T.text, fontSize: 15 },
+  // The same box the bar's circle wore, at the menu's own scale.
+  menuBox: { color: T.muted, fontSize: 15, width: 16 },
+  menuBoxOn: { color: T.accent },
 }));

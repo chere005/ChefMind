@@ -23,9 +23,9 @@
  * and pretending otherwise would mean a row that silently snapped back with no
  * reason given.
  */
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { AISLES, byRecOrd, ingredientAisle, ingredientParts, newId, ordBetween, recombineLines, type Aisle, type Rec } from '@calmind/core';
+import { AISLES, byRecOrd, duplicateItem, ingredientAisle, ingredientParts, newId, ordBetween, type Aisle, type Rec } from '@calmind/core';
 import { useStore } from '../store';
 import { themed, T } from '../theme';
 import { TopBar } from '../chrome';
@@ -34,7 +34,7 @@ import { useSwipeLeft } from '../components/swiperow';
 import { EditExit } from '../components/EditExit';
 import { PickBar } from '../components/PickBar';
 import { useToast } from '../components/Toast';
-import { CircleBtn, ConfirmDelete, Field, Scroll, TOPBAR_CTRL, WebHitSlop } from '../ui';
+import { CircleBtn, ConfirmDelete, Field, Scroll, WebHitSlop } from '../ui';
 
 type Row = Rec<'reminder'>;
 
@@ -98,6 +98,19 @@ function FlagList({ kind }: { kind: Kind }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
   const swipe = useSwipeLeft();
+  /**
+   * A hold JUST HAPPENED, so the click it ends with is not a tap.
+   *
+   * react-native-web's Pressable fires `onPress` on the click that follows a
+   * long press — the timer and the click are independent — so holding a row
+   * turned edit mode on and then immediately opened the row's rename field
+   * over it, which reads as "there is no edit mode here" (Sean, 2026-09-16).
+   * Native does not do this, which is exactly why it was easy to miss.
+   *
+   * A ref, not state: it must be true for the click that is already on its
+   * way, and a re-render is neither needed nor wanted in between.
+   */
+  const justHeld = useRef(false);
 
   const { folder, section, rows, groups } = useMemo(() => {
     const f = recs.find(
@@ -106,9 +119,10 @@ function FlagList({ kind }: { kind: Kind }) {
     const sec = f
       ? recs.filter((r): r is Rec<'section'> => r.type === 'section' && !r.deleted && r.payload.folderId === f.id).sort(byRecOrd)[0]
       : undefined;
-    const list = sec
+    const all = sec
       ? recs.filter((r): r is Row => r.type === 'reminder' && !r.deleted && r.payload.sectionId === sec.id).sort(byRecOrd)
       : [];
+    const list = all;
     // Aisle first, stored order within it. A stable sort is what makes the
     // second half of that true — Array.prototype.sort has been stable since
     // ES2019, and the list arrives already sorted by ord.
@@ -139,7 +153,10 @@ function FlagList({ kind }: { kind: Kind }) {
    */
   const drag = useRowDrag(rows.length, (from, to) => {
     swipe.clear();
-    const next = moveAt(rows, from, to);
+    const moved = moveAt(rows, from, to);
+    // Every row is on screen, so the walk below sees every row: nothing can
+    // be left holding a stale key the way hidden rows once could.
+    const next = moved;
     mutate((e) => {
       let prev: string | null = null;
       for (const r of next) {
@@ -168,16 +185,6 @@ function FlagList({ kind }: { kind: Kind }) {
     );
   };
 
-  /**
-   * A tick here is a plain flip, not core's reminderToggle.
-   *
-   * reminderToggle rolls a repeat forward and re-dates the row, which is right
-   * for a reminder and meaningless for a thing to buy — these carry no date
-   * and no repeat by construction. Flipping `done` is the whole behaviour, and
-   * nothing about it can surprise a list that has none of the other fields.
-   */
-  const tick = (r: Row) => mutate((e) => e.put({ ...r, payload: { ...r.payload, done: !r.payload.done } }));
-
   const commitEdit = (r: Row) => {
     const text = editText.trim();
     setEditing(null);
@@ -186,10 +193,12 @@ function FlagList({ kind }: { kind: Kind }) {
     else if (text !== r.payload.text) mutate((e) => e.put({ ...r, payload: { ...r.payload, text } }));
   };
 
-  const endEdit = () => { setPageEdit(false); setSelected([]); };
+  /* Edit mode and the selection are separate things now, exactly as they are
+   * on Recipes: leaving edit mode puts the grips away and leaves what you
+   * picked alone. Clear is in the bar, an inch from the count. */
+  const endEdit = () => setPageEdit(false);
   const toggleSelected = (id: string) =>
     setSelected((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
-  const allSelected = rows.length > 0 && selected.length === rows.length;
   /**
    * Select all — and INTO edit mode from outside it, which is the one way this
    * differs from the same button on Recipes (Sean, 2026-08-22: "a select all
@@ -200,8 +209,12 @@ function FlagList({ kind }: { kind: Kind }) {
    * It still toggles: pressing it with everything already picked clears the
    * lot rather than doing nothing twice.
    */
+  /**
+   * All means ALL. It used to un-pick when everything was already picked —
+   * the top-bar circle was one control with two meanings — and Clear is its
+   * own button beside it in the bar now (Sean, 2026-09-16).
+   */
   const selectAll = () => {
-    if (allSelected) { setSelected([]); return; }
     setPageEdit(true);
     setSelected(rows.map((r) => r.id));
   };
@@ -210,112 +223,30 @@ function FlagList({ kind }: { kind: Kind }) {
     const ids = selected.slice();
     if (ids.length === 0) return;
     mutate((e) => { for (const id of ids) e.del(id); });
+    setSelected([]);
     toast(ids.length === 1 ? '1 removed.' : `${ids.length} removed.`);
-    endEdit();
   };
 
-  /**
-   * REFRESH — combine the picked rows harder than the list could when they
-   * arrived (Sean, 2026-08-22: "a button that says refresh that puts
-   * additional effort into combining things that are alike").
-   *
-   * The rule lives in core's recombineLines with its own suite: plurals and
-   * prep words folded, a bracketed metric measure preferred to the cook's own,
-   * and mass still never crossed with volume. What this owns is where the
-   * result lands — the surviving rows are the picked ones REUSED in place, so
-   * a tidy keeps each line's position and the list does not jump about under
-   * the thumb.
-   *
-   * A rewritten row loses its tick. The amount on it changed, so a tick that
-   * survived would be claiming you had already bought a quantity you had not
-   * seen; a row whose text is unchanged keeps whatever tick it had.
+  /*
+   * NO REFRESH, AND NO BROOM. Sean, 2026-09-16 named this bar exactly: "N
+   * Selected, All, Clear, space, Delete". Refresh (core's `recombineLines`,
+   * which still has its own suite) had no other way in, and the broom cleared
+   * ticks that no longer exist — both went with the tick, and select-and-
+   * delete is how a bought row leaves the list now.
    */
-  const refresh = () => {
-    const picked = rows.filter((r) => selected.includes(r.id));
-    if (picked.length === 0) return;
-    const combined = recombineLines(picked.map((r) => r.payload.text));
-    const unchanged =
-      combined.length === picked.length && combined.every((t, i) => t === picked[i]!.payload.text);
-    if (unchanged) {
-      // Saying so beats a bar that closes and leaves you wondering whether it
-      // ran — the honest answer to "combine these" is often "they already are".
-      toast('Nothing there to combine.');
-      endEdit();
-      return;
-    }
-    mutate((e) => {
-      combined.forEach((text, i) => {
-        const row = picked[i]!;
-        if (row.payload.text !== text) e.put({ ...row, payload: { ...row.payload, text, done: false } });
-      });
-      for (const row of picked.slice(combined.length)) e.del(row.id);
-    });
-    // The count is what makes it worth pressing, so say it: 'tidied' alone
-    // does not tell you whether anything actually merged.
-    toast(
-      combined.length === picked.length
-        ? 'Tidied up.'
-        : `${picked.length} rows became ${combined.length}.`,
-    );
-    endEdit();
-  };
-
-  const ticked = rows.filter((r) => r.payload.done);
-  const clearTicked = () => {
-    if (ticked.length === 0) return;
-    mutate((e) => { for (const r of ticked) e.del(r.id); });
-    toast(`${ticked.length} cleared.`);
-  };
 
   // The flat display index of a row, which is what the drag hook counts in.
   const idxOf = (id: string) => rows.findIndex((r) => r.id === id);
 
   return (
     <View style={s.page}>
-      <TopBar
-        title={copy.title}
-        controls={
-          <>
-            {/* Only offered when there IS something ticked: a control that
-                does nothing is a control you learn to distrust. */}
-            {ticked.length > 0 && (
-              <CircleBtn
-                testID={`${copy.prefix}-clear`}
-                // NOT '␡'. That codepoint has no glyph in the app's font and
-                // renders as a literal 'DEL' box — seen in the browser the
-                // first time this bar drew.
-                glyph="🧹"
-                label={`Clear ${ticked.length} ticked`}
-                size={TOPBAR_CTRL}
-                color={T.dim}
-                onPress={clearTicked}
-              />
-            )}
-            <CircleBtn
-              testID={`${copy.prefix}-edit`}
-              glyph="✎"
-              label={pageEdit ? 'Leave edit mode' : 'Edit mode — pick and reorder'}
-              size={TOPBAR_CTRL}
-              color={pageEdit ? T.accent : T.dim}
-              onPress={() => (pageEdit ? endEdit() : setPageEdit(true))}
-            />
-            {/* Select all, beside Edit — and unlike the Recipes tab's, this
-                one shows OUTSIDE edit mode too, because it is the way in:
-                pressing it arrives in edit mode with the lot already picked.
-                Hidden on an empty list, where it would have nothing to do. */}
-            {rows.length > 0 && (
-              <CircleBtn
-                testID={`${copy.prefix}-select-all`}
-                glyph={allSelected ? '☒' : '☑'}
-                label={allSelected ? 'Select none' : 'Select all'}
-                size={TOPBAR_CTRL}
-                color={allSelected ? T.accent : T.dim}
-                onPress={selectAll}
-              />
-            )}
-          </>
-        }
-      />
+      {/*
+        NO CONTROLS. The pencil is gone (Sean, 2026-09-16: "get rid of the
+        edit button on the top bar") — holding a row is the way in, which is
+        the gesture Recipes already had and the one this screen now shares.
+        The broom and the Show-completed switch went with the tick.
+      */}
+      <TopBar title={copy.title} />
       <Scroll contentContainerStyle={s.scrollWrap} scrollEnabled={drag.dragIdx === null}>
         <EditExit
           active={pageEdit || swipe.swiped !== null}
@@ -345,13 +276,16 @@ function FlagList({ kind }: { kind: Kind }) {
               {g.rows.map((r) => {
                 const i = idxOf(r.id);
                 const picked = selected.includes(r.id);
-                // ONE CONTROL, TWO MEANINGS — a tick outside edit mode, a
-                // selection inside it. The same control rather than a second
-                // one beside it because the row has room for one and the two
-                // are never wanted at the same moment: you are either shopping
-                // or you are tidying. The SHAPE is what says which, so the
-                // change is visible before you press anything.
-                const on = pageEdit ? picked : r.payload.done;
+                // A SELECTOR DOT, ALWAYS, on both lists (Sean, 2026-09-16:
+                // "the Pantry and Shopping page should now have the same
+                // always visible selector dots").
+                //
+                // It was ONE CONTROL WITH TWO MEANINGS — a square tick for
+                // "got it" out of edit mode, a round select inside it. The
+                // pantry lost the tick first, because everything in a pantry
+                // is already got; shopping lost it here. A bought row leaves
+                // by being selected and deleted, which is one idea instead of
+                // two and the same idea the other two screens use.
                 return (
                   <View key={r.id}>
                     {drag.slot === i && <View style={s.dropLine} />}
@@ -371,21 +305,23 @@ function FlagList({ kind }: { kind: Kind }) {
                         <Text style={s.gripText}>≡</Text>
                       </View>
                       <Pressable
-                        testID={pageEdit ? `${copy.prefix}-pick` : `${copy.prefix}-tick`}
+                        testID={`${copy.prefix}-pick`}
                         accessibilityRole="checkbox"
-                        accessibilityState={{ checked: on }}
-                        accessibilityLabel={pageEdit ? `Select ${r.payload.text}` : r.payload.text}
+                        accessibilityState={{ checked: picked }}
+                        accessibilityLabel={`Select ${r.payload.text}`}
                         onPress={() => {
+                          if (justHeld.current) { justHeld.current = false; return; }
                           if (swipe.justSwiped()) return;
-                          if (pageEdit) toggleSelected(r.id);
-                          else tick(r);
+                          toggleSelected(r.id);
                         }}
+                        onLongPress={() => { justHeld.current = true; setPageEdit(true); }}
+                        delayLongPress={350}
                         hitSlop={8}
                         style={s.boxWrap}
                       >
                         <WebHitSlop slop={8} />
-                        <View style={[s.box, pageEdit && s.boxCircle, on && s.boxOn]}>
-                          {on && <Text style={s.boxTick}>✓</Text>}
+                        <View style={[s.box, s.boxCircle, picked && s.boxOn]}>
+                          {picked && <Text style={s.boxTick}>✓</Text>}
                         </View>
                       </Pressable>
                       {editing === r.id ? (
@@ -403,22 +339,40 @@ function FlagList({ kind }: { kind: Kind }) {
                           testID={`${copy.prefix}-row`}
                           style={s.rowBody}
                           onPress={() => {
+                            if (justHeld.current) { justHeld.current = false; return; }
                             if (swipe.justSwiped()) return;
                             if (swipe.swiped) { swipe.clear(); return; }
-                            // In edit mode the row PICKS rather than opens,
-                            // exactly as a recipe row does — the whole row is
-                            // the target, so picking a dozen is a dozen taps
-                            // anywhere rather than a dozen taps on a 20pt box.
-                            if (pageEdit) { toggleSelected(r.id); return; }
+                            // A tap EDITS, in edit mode as much as out of it —
+                            // the dot beside it is what picks, so the row keeps
+                            // one meaning. Recipes' rows read the same way
+                            // (Sean, 2026-09-16: "the list items should behave
+                            // the same ... in Recipes, Pantry, and Shopping").
                             setEditing(r.id);
                             setEditText(r.payload.text);
                           }}
+                          // The way into edit mode, now that the pencil is gone
+                          // from the bar above.
+                          onLongPress={() => { justHeld.current = true; setPageEdit(true); }}
+                          delayLongPress={350}
                         >
-                          <Text style={[s.rowText, r.payload.done && s.rowDone]}>{r.payload.text}</Text>
+                          <Text style={s.rowText}>{r.payload.text}</Text>
                         </Pressable>
                       )}
+                      {/* Duplicate and delete, the pair Recipes puts in edit
+                          mode beside its grip — "holding a listed entry enters
+                          edit mode which brings up the duplicate, drag, and
+                          delete buttons". */}
+                      {pageEdit && (
+                        <>
+                          <CircleBtn testID={`${copy.prefix}-dup`} glyph="⧉" label="Duplicate" size={22} onPress={() => {
+                            const res = duplicateItem(recs, r.id, newId);
+                            if (!('error' in res)) mutate((e) => res.put.forEach((x) => e.put(x)));
+                          }} />
+                          <ConfirmDelete testID={`${copy.prefix}-del`} onDelete={() => mutate((e) => e.del(r.id))} />
+                        </>
+                      )}
                       {swipe.swiped === r.id && !pageEdit && (
-                        <ConfirmDelete testID={`${copy.prefix}-del`} onDelete={() => { swipe.clear(); mutate((e) => e.del(r.id)); }} />
+                        <ConfirmDelete testID={`${copy.prefix}-swipedel`} onDelete={() => { swipe.clear(); mutate((e) => e.del(r.id)); }} />
                       )}
                     </View>
                   </View>
@@ -430,17 +384,20 @@ function FlagList({ kind }: { kind: Kind }) {
           {pageEdit && <Pressable style={s.editBackdropFill} onPress={endEdit} />}
         </EditExit>
       </Scroll>
-      {/* What the selection is FOR. The Recipes tab's bar, the same component,
-          ending in Refresh instead of "Add to shopping list" — Sean,
-          2026-08-22: "shopping selection pane should look similar but instead
-          of 'add to shopping list' it would be a button that says refresh". */}
-      {pageEdit && selected.length > 0 && (
+      {/* The Recipes tab's bar, the same component, ending at Delete: on these
+          two lists the selection IS for deleting, so there is nothing to put
+          to the right of it. */}
+      {/* ALWAYS SHOWING (Sean, 2026-09-16), on all three lists. It was the
+          only thing that said how many were picked, and it appeared only once
+          something was — so the count you wanted before choosing was the one
+          thing you could not see, and All was behind a mode. */}
+      {(
         <PickBar
           prefix={copy.prefix}
           count={selected.length}
+          onAll={selectAll}
           onClear={() => setSelected([])}
           onDelete={deleteSelected}
-          action={{ label: 'Refresh', testID: `${copy.prefix}-refresh`, onPress: refresh }}
         />
       )}
     </View>
@@ -483,7 +440,6 @@ const s = themed(() => StyleSheet.create({
   rowText: { color: T.text, fontSize: 16 },
   // Struck through and dimmed, kept in place: a bought item that JUMPS to the
   // bottom takes your eye off the shelf you are standing at.
-  rowDone: { color: T.muted, textDecorationLine: 'line-through' },
   editField: { flex: 1 },
   dropLine: { height: 2, backgroundColor: T.accent, borderRadius: 1, marginVertical: 2 },
   editBackdropFill: { flexGrow: 1, minHeight: 160 },

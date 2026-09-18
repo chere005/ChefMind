@@ -9,7 +9,6 @@ import { TabBar, NavCtx, type Tab } from './src/nav';
 import { Login } from './src/screens/Login';
 import { Notes } from './src/screens/Notes';
 import { Pantry, Shopping } from './src/screens/Shopping';
-import { Add } from './src/screens/Add';
 import { Search } from './src/screens/Search';
 import { themed, currentTheme, onThemeChange, T, THEMES_LIGHT, PAGE_MAX_WIDTH } from './src/theme';
 
@@ -22,10 +21,11 @@ function Root() {
   const [tab, setTabState] = useState<Tab>(() => {
     if (typeof localStorage !== 'undefined') {
       const t = localStorage.getItem('chefmind.tab');
-      // 'reminders' is deliberately absent, and the absence does work: a
-      // browser that used the old build has that string in localStorage, and
-      // accepting it would land on a tab that no longer renders anything.
-      if (t === 'add' || t === 'notes' || t === 'shopping') return t;
+      // 'reminders' and 'add' are deliberately absent, and the absence does
+      // work: a browser that used an older build has one of those strings in
+      // localStorage, and accepting it would land on a tab that no longer
+      // renders anything.
+      if (t === 'notes' || t === 'shopping') return t;
     }
     return 'notes';
   });
@@ -47,7 +47,7 @@ function Root() {
       if (typeof localStorage !== 'undefined') localStorage.setItem('chefmind.tab', prev);
     }
   };
-  // A note made anywhere opens in its editor — the Add tab hands the id over.
+  // A note made anywhere opens in its editor — Search hands the id over.
   const [noteToOpen, setNoteToOpen] = useState<string | null>(null);
   // The 🔍 in every top bar opens the one search screen; a tapped result
   // closes it and goes where the thing lives (Sean, 2026-08-19).
@@ -60,15 +60,6 @@ function Root() {
       {/* Phone-first column, centred on a wide window — the suite's page shape. */}
       <View style={s.centre}>
         <View style={s.body}>
-          {tab === 'add' && (
-            <Add
-              done={() => setTab('notes')}
-              onNoteCreated={(id) => {
-                setNoteToOpen(id);
-                setTab('notes');
-              }}
-            />
-          )}
           {tab === 'notes' && <Notes openNoteId={noteToOpen} onOpenConsumed={() => setNoteToOpen(null)} />}
           {tab === 'pantry' && <Pantry />}
           {tab === 'shopping' && <Shopping />}

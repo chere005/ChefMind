@@ -11,9 +11,8 @@
  * convert out and never repeat; a date in the title puts one on the calendar.
  */
 import React, { useEffect, useMemo, useState, useRef } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { defaultNoteTitle, looksLikeDefaultNoteTitle, deleteSection, renameSection, sectionNameTaken, byRecOrd, findVariant, ingredientParts, isRecipeNote, joinRecipeBody, liveSections, recipeFromPages, recipeSections, richLines, scaleRecipeBody, shoppingLines, splitRecipeBody, variantBody, duplicateItem, prefsPut, moveNote, moveSection, moveSectionEmptyingFolder, newId, nowStr, ordBetween, parseWhenFromText, todayStr, type Rec, type RecipeVariant } from '@calmind/core';
+import { LONG_PRESS_MS, defaultNoteTitle, looksLikeDefaultNoteTitle, deleteSection, renameSection, sectionNameTaken, byRecOrd, findVariant, ingredientParts, isRecipeNote, joinRecipeBody, liveSections, recipeSections, richLines, scaleRecipeBody, splitRecipeBody, variantBody, duplicateItem, prefsPut, moveNote, moveSection, moveSectionEmptyingFolder, newId, nowStr, ordBetween, parseWhenFromText, todayStr, type Rec, type RecipeVariant } from '@calmind/core';
 import * as Clipboard from 'expo-clipboard';
 import { useStore } from '../store';
 import { UnitBadge } from '../components/IngredientBadge';
@@ -21,8 +20,9 @@ import { RichText } from '../components/RichText';
 import { useNav } from '../nav';
 import { themed, T } from '../theme';
 import { TopBar } from '../chrome';
-import { FolderPick, useFolderView } from '../components/FolderPick';
-import { CircleBtn, CollapseAllBtn, ConfirmDelete, DayPickBtn, DeletePill, Field, Pill, Scroll, TOPBAR_CTRL, TOPBAR_DOT_TOP, WebHitSlop } from '../ui';
+import { FolderDot, FolderPick, useFolderView } from '../components/FolderPick';
+import { CircleBtn, ConfirmDelete, DayPickBtn, DeletePill, Field, FoldCaret, Pill, Scroll, TOPBAR_CTRL, TOPBAR_DOT_TOP, WebHitSlop } from '../ui';
+import { useFolds } from '../folds';
 import { DayPick } from '../components/DayPick';
 import { Dropdown } from '../components/Dropdown';
 import { useRowDrag } from '../components/rowdrag';
@@ -32,6 +32,7 @@ import { PickBar } from '../components/PickBar';
 import { Chevron } from '../components/Chevron';
 import { SyncDot, syncWord } from '../components/SyncDot';
 import { useToast } from '../components/Toast';
+import { addToShopping, ingredientsOf, shopMessage } from '../addToShopping';
 import { EditExit } from '../components/EditExit';
 import { RecipeEditor } from './RecipeEditor';
 import { ItemModal } from '../components/ItemModal';
@@ -163,6 +164,8 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
   const { view, visible: visibleFolders, visibleShared, sharedView, sharedPartner } = useFolderView('notes');
   const setNotePrefs = (lastView: string) => mutate((e) => e.put(prefsPut(recs, 'notes', { lastView })));
   const [openId, setOpenId] = useState<string | null>(null);
+  /** The folder picker's card, raised from the username menu's Folders row. */
+  const [pickOpen, setPickOpen] = useState(false);
   const [sel, setSel] = useNoteScoped(openId, { start: 0, end: 0 });
   const [dateOpen, setDateOpen] = useNoteScoped(openId, false);
   const [bodyEditing, setBodyEditing] = useNoteScoped(openId, false);
@@ -232,18 +235,24 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
   // Escape to leave; grips and row controls exist only inside it.
   const [pageEdit, setPageEdit] = useState(false);
   /**
-   * The recipes ticked in edit mode, for "add to the shopping list".
+   * The recipes ticked, for "add to the shopping list".
    *
-   * Sean, 2026-08-21: edit mode is a top-bar button, and hold-tap or
-   * double-tap gets you there too. Selection is what edit mode is FOR in this
-   * app — the drag grips, the date chips and the duplicate buttons come along
-   * because they always have.
+   * INDEPENDENT OF EDIT MODE since 2026-09-16 — Sean: "always show the
+   * selection circles, not just in edit mode.. edit mode just brings up
+   * dragging icons and other buttons.. when an item is selected, it brings up
+   * the 1 Selected pane". Selection used to BE what edit mode was for, which
+   * made the commonest thing on this screen — pick three recipes, send them
+   * to the list — cost a mode you first had to know how to enter.
    *
-   * Cleared whenever edit mode ends, so leaving and coming back never arrives
-   * holding a selection nobody can see.
+   * So the circle is always drawn, the PickBar answers to the SELECTION
+   * rather than to the mode, and leaving edit mode no longer clears what you
+   * picked: nothing about it was ever invisible, and Clear is right there in
+   * the bar. What edit mode still owns is the grips, the date chips, the
+   * duplicate and delete buttons — the things that change a recipe rather
+   * than choose one.
    */
   const [selected, setSelected] = useState<string[]>([]);
-  const endEdit = () => { setPageEdit(false); setSelected([]); };
+  const endEdit = () => setPageEdit(false);
   const toggleSelected = (id: string) =>
     setSelected((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
   /**
@@ -264,6 +273,9 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
    */
   const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTap = useRef<{ id: string; at: number } | null>(null);
+  /** A hold just happened, so the click ending it is not a tap — see the same
+   *  ref on the two lists for what react-native-web does here. */
+  const justHeld = useRef(false);
   useEffect(() => () => { if (tapTimer.current) clearTimeout(tapTimer.current); }, []);
   /** The editor's Copy says so in a popup — see components/Toast. */
   const toast = useToast();
@@ -272,51 +284,23 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
   /** What is being TYPED in that sheet, before it parses into a real date. */
   const [listPickOpen, setListPickOpen] = useState(false);
   /**
-   * Was this editor reached from another TAB (the calendar's day panel, the
-   * Add sheet) rather than from the notes list?
+   * Was this editor reached from another TAB (upstream: the calendar's day
+   * panel; here: a search hit) rather than from the notes list?
    *
    * Sean: the editor's back should return to where you came from. "← All
    * notes" always went to the list, so opening a note from the calendar and
    * pressing back left you in Notes — one tab away from what you were doing.
    */
   const cameFromTab = useRef(false);
-  const [nfolded, setNFolded] = useState<Set<string>>(new Set());
-  const [foldedFolders, setFoldedFolders] = useState<Set<string>>(new Set());
-  useEffect(() => {
-    AsyncStorage.getItem('calmind.foldedFolders.notes')
-      .then((raw) => raw && setFoldedFolders(new Set(JSON.parse(raw))))
-      // Corrupt fold state is a cosmetic loss; unguarded it was an unhandled
-      // rejection as well, which is a cosmetic loss that shouts.
-      .catch(() => {});
-  }, []);
-  const toggleFolderFold = (id: string) => {
-    const next = new Set(foldedFolders);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    setFoldedFolders(next);
-    // Swallowed deliberately, and this is the triage: what is lost when a
-    // fold write fails is which sections were collapsed, next launch. No
-    // user content, nothing unrecoverable, and an alert about a collapsed
-    // folder would be worse than the loss. The failures worth surfacing in
-    // this app are the ones that lose DATA or lie about state — see
-    // store.tsx's persistFailed and the shared-write reconcile.
-    AsyncStorage.setItem('calmind.foldedFolders.notes', JSON.stringify([...next])).catch(() => {});
-  };
-  useEffect(() => {
-    AsyncStorage.getItem('calmind.folded.notes')
-      .then((raw) => raw && setNFolded(new Set(JSON.parse(raw))))
-      .catch(() => {});
-  }, []);
-  const foldSave = (next: Set<string>) => {
-    setNFolded(next);
-    AsyncStorage.setItem('calmind.folded.notes', JSON.stringify([...next])).catch(() => {});
-  };
-  const toggleNFold = (id: string) => {
-    const next = new Set(nfolded);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    foldSave(next);
-  };
+  // Two levels, one hook each — see folds.ts for what the hand-rolled copies
+  // of this had drifted into. The old local names are kept so every read
+  // below still says what it means.
+  const sectionFolds = useFolds('calmind.folded.notes');
+  const folderFolds = useFolds('calmind.foldedFolders.notes');
+  const nfolded = sectionFolds.shut;
+  const foldedFolders = folderFolds.shut;
+  const toggleNFold = sectionFolds.toggle;
+  const toggleFolderFold = folderFolds.toggle;
   useEffect(() => {
     if (!pageEdit || typeof document === 'undefined') return;
     const onKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape') setPageEdit(false); };
@@ -440,7 +424,7 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
     // whatever body is on screen by then.
     return cancelFreshFocus;
   }, [openId, setBodyEditing]);
-  // Another screen (the Add tab) created a note — land in its editor, as prod does.
+  // Another screen (Search) opened a note — land in its editor, as prod does.
   React.useEffect(() => {
     if (openNoteId) {
       freshEdit.current = openNoteId;
@@ -466,10 +450,6 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
     return { folders, sectionsOf, notesOf, selectableIds };
   }, [recs, visibleFolders]);
 
-  /** Select-all is a TOGGLE, so it needs to know whether it is already done. */
-  const allSelected = selectableIds.length > 0 && selected.length >= selectableIds.length
-    && selectableIds.every((id) => selected.includes(id));
-
   /** Every section, so the button can both act and show which way it points. */
   const mySectionIds = folders.flatMap((f) => sectionsOf(f.id).map((x) => x.id));
   // …and the partner's, when their blocks are actually on screen. Sean asked
@@ -487,10 +467,23 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
         )
       : [];
   const allSectionIds = [...mySectionIds, ...sharedSectionIds];
-  const allCollapsed = allSectionIds.length > 0 && allSectionIds.every((id) => nfolded.has(id));
-  const collapseAllNotes = () => {
-    foldSave(allCollapsed ? new Set<string>() : new Set(allSectionIds));
-  };
+  /** The folder level, keyed exactly as its carets key their folds. */
+  const allFolderIds = [
+    ...folders.map((f) => f.id),
+    ...(view === 'all' && sharedPartner ? visibleShared.map((f) => `sh:${f.id}`) : []),
+  ];
+  /**
+   * Hold a caret, fold its whole level — the collapse-all button's job, moved
+   * onto the control it was describing (Sean, 2026-09-16).
+   *
+   * `wasOpen` is the state of the caret that was HELD, not a toggle of some
+   * remembered all-or-nothing: hold an open one and the level closes, hold a
+   * closed one and it opens. That makes "put this all away" one gesture on
+   * whatever is still open, which the old button could not do — it could only
+   * ever mean one of this screen's two levels, and it had picked sections.
+   */
+  const foldAllSections = (wasOpen: boolean) => sectionFolds.foldAll(allSectionIds, wasOpen);
+  const foldAllFolders = (wasOpen: boolean) => folderFolds.foldAll(allFolderIds, wasOpen);
 
   // Every visible row in render order, plus a placeholder per empty section
   // so an empty section is a drop target (row-height only while dragging).
@@ -578,93 +571,22 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
   /**
    * The selected recipes, turned into shopping rows.
    *
-   * A shopping row IS a reminder — text, a tick, an order key, a swipe to
-   * delete — so this writes reminders into the shopping folder and everything
-   * that already handles reminders handles them. See the `shopping` flag on
-   * Folder for why that is a flag rather than a third app.
-   *
-   * The combining rule (same thing, same unit, added together) is core's
-   * shoppingLines, tested there. What this owns is where the rows land: at the
-   * END of the list, after whatever is already on it, in the order the recipes
-   * were picked. A prepend would push a half-shopped list down the screen
-   * every time something was added to it.
-   *
-   * Anything already on the list is LEFT ALONE, including a duplicate. Merging
-   * into rows a person has already ticked, edited or reordered is a rule
-   * nobody asked for, and "eggs" appearing twice is a thing you see and fix in
-   * a second.
+   * The work is `addToShopping`, which the Recipe page's Shop button shares —
+   * the pantry filter, where the rows land and what to say when nothing was
+   * added are one behaviour, and a second copy of it would drift the first
+   * time one of the three changed. What is left here is the selection.
    */
   const addSelectedToShopping = () => {
     const picked = selected
       .map((id) => recs.find((r): r is Rec<'note'> => r.type === 'note' && r.id === id && !r.deleted))
       .filter((n): n is Rec<'note'> => n !== undefined);
-    // What is already in the pantry, so it is never added to the list. Read
-    // here rather than filtered afterwards because core owns the matching —
-    // 'flour' must not claim 'almond flour', and that rule belongs in one
-    // place with the tests for it.
-    const pantryTexts = (() => {
-      const pf = recs.find((r): r is Rec<'folder'> => r.type === 'folder' && !r.deleted && r.payload.pantry === true);
-      if (!pf) return [];
-      const secs = new Set(
-        recs.filter((r): r is Rec<'section'> => r.type === 'section' && !r.deleted && r.payload.folderId === pf.id).map((x) => x.id),
-      );
-      return recs
-        .filter((r): r is Rec<'reminder'> => r.type === 'reminder' && !r.deleted && secs.has(r.payload.sectionId))
-        .map((r) => r.payload.text);
-    })();
-    const lines = shoppingLines(
-      picked.map((n) => ({
-        title: n.payload.title,
-        // The recipe BLOCK of the body, not the whole body: a note may carry
-        // ordinary text before and after it, and none of that is shopping.
-        ingredients: recipeFromPages([splitRecipeBody(n.payload.body)?.recipe ?? n.payload.body]).ingredients,
-      })),
-      pantryTexts,
+    const result = addToShopping(
+      recs,
+      mutate,
+      picked.map((n) => ({ title: n.payload.title, ingredients: ingredientsOf(n) })),
     );
-    if (lines.length === 0) {
-      // Two different nothings, and saying which is the whole point: a cook
-      // who has everything already should not be left wondering whether the
-      // button worked.
-      const listed = picked.some((n) => recipeFromPages([splitRecipeBody(n.payload.body)?.recipe ?? n.payload.body]).ingredients.length > 0);
-      if (listed) toast('Everything for that is already in the pantry.');
-      else toast(picked.length === 1 ? 'That recipe lists no ingredients.' : 'Those recipes list no ingredients.');
-      return;
-    }
-    const folder = recs.find((r): r is Rec<'folder'> => r.type === 'folder' && !r.deleted && r.payload.shopping === true);
-    const section = folder
-      ? recs.filter((r): r is Rec<'section'> => r.type === 'section' && !r.deleted && r.payload.folderId === folder.id).sort(byRecOrd)[0]
-      : undefined;
-    if (!folder || !section) {
-      // normalize guarantees both, and a missing one means the store has not
-      // hydrated yet. Saying so beats writing rows into nowhere.
-      toast('The shopping list is not ready yet — try again in a moment.');
-      return;
-    }
-    const last = recs
-      .filter((r): r is Rec<'reminder'> => r.type === 'reminder' && !r.deleted && r.payload.sectionId === section.id)
-      .sort(byRecOrd)
-      .slice(-1)[0];
-    mutate((e) => {
-      // Each row's key is made from the one before it, not all from the same
-      // neighbour: ordBetween(last, null) is deterministic, so a loop that
-      // asked it the same question every time would give every row the same
-      // key and the list would come out in id order.
-      let prev = last?.payload.ord ?? null;
-      for (const text of lines) {
-        prev = ordBetween(prev, null);
-        e.put({
-          id: newId(),
-          type: 'reminder',
-          updated: 0,
-          payload: {
-            text, due: null, time: null, done: false, repeat: null,
-            folderId: folder.id, sectionId: section.id, indent: 0, ord: prev,
-          },
-        });
-      }
-    });
-    toast(`${lines.length} added to the shopping list.`);
-    endEdit();
+    toast(shopMessage(result, picked.length === 1));
+    if (result.ok) endEdit();
   };
 
   /**
@@ -1273,43 +1195,22 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
 
   return (
     <View style={s.page}>
-      {/* Right of the name, as in Reminders and as Sean asked. */}
+      {/* Right of the name, as in Reminders and as Sean asked.
+
+          NO CONTROLS. The pencil went 2026-09-16 (Sean: "get rid of the edit
+          button on the top bar") — holding a row is the way in, and it is the
+          way in on all three lists now. It had been the top bar's since
+          2026-08-21, when hold-tap was the only route and that is a gesture
+          you have to already know about; what makes it discoverable now is
+          that the three screens agree. */}
+      {/* No picker ring in the bar: it is a row in the username menu now
+          (Sean, 2026-09-16), so the card is raised from there and rendered
+          here, buttonless. */}
       <TopBar
         title="Recipes"
-        controls={
-          <>
-            {/* Sean, 2026-08-21: "edit mode is a button at the top bar". It
-                was reachable only by hold-tap before, which is a gesture you
-                have to already know about. The pencil goes accent while it is
-                on, so the bar itself says which mode you are in. */}
-            <CircleBtn
-              testID="recipes-edit"
-              glyph="✎"
-              label={pageEdit ? 'Leave edit mode' : 'Edit mode — select recipes'}
-              size={TOPBAR_CTRL}
-              color={pageEdit ? T.accent : T.dim}
-              onPress={() => (pageEdit ? endEdit() : setPageEdit(true))}
-            />
-            {/* Select all, beside Edit (Sean, 2026-08-22). Edit-mode only,
-                because outside it there is no selection for it to mean
-                anything about. It TOGGLES: pressing it with everything
-                already picked clears the lot, which is the gesture people
-                expect from a select-all and saves the trip to Clear. */}
-            {pageEdit && (
-              <CircleBtn
-                testID="recipes-select-all"
-                glyph={allSelected ? '☒' : '☑'}
-                label={allSelected ? 'Select none' : 'Select all'}
-                size={TOPBAR_CTRL}
-                color={allSelected ? T.accent : T.dim}
-                onPress={() => setSelected(allSelected ? [] : selectableIds)}
-              />
-            )}
-            <CollapseAllBtn open={!allCollapsed} onPress={collapseAllNotes} />
-          </>
-        }
-        picker={<FolderPick app="notes" />}
+        folders={{ dot: <FolderDot app="notes" />, onOpen: () => setPickOpen(true) }}
       />
+      <FolderPick app="notes" button={false} open={pickOpen} onClose={() => setPickOpen(false)} />
       {/* A live drag holds the scroll still — see Habits for the why. */}
       <Scroll contentContainerStyle={s.scrollWrap} scrollEnabled={drag.dragIdx === null && secDrag.dragging === null}>
         {/* The phone's tap-to-exit; the web keeps its document listener.
@@ -1330,10 +1231,13 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
                 below a list that fills the screen. The controls inside keep
                 their own presses — this fires on the row's bare surface. */}
             <View testID={`head-fold-${f.payload.name}`} style={s.folderHead}>
-              <Pressable onPress={() => toggleFolderFold(f.id)} hitSlop={8} style={s.chevWrap}>
-                <WebHitSlop />
-                <Chevron open={!foldedFolders.has(f.id)} color={T.text} />
-              </Pressable>
+              <FoldCaret
+                testID={`foldfold-${f.payload.name}`}
+                open={!foldedFolders.has(f.id)}
+                color={T.text}
+                onPress={() => toggleFolderFold(f.id)}
+                onLongPress={() => foldAllFolders(!foldedFolders.has(f.id))}
+              />
               <Text style={[s.folderName, { backgroundColor: f.payload.color + '33' }]}>{f.payload.name}</Text>
               <CircleBtn testID={`foldadd-${f.payload.name}`} glyph="+" label="Add" color={T.accent} size={22} onPress={() => { setAddingSection(f.id); setNewSecName(''); }} />
               <View style={s.folderRule} />
@@ -1360,10 +1264,12 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
                     <WebHitSlop slop={6} />
                     <Text style={s.rowGripText}>≡</Text>
                   </View>
-                  <Pressable testID={`secfold-${sec.payload.name}`} onPress={() => toggleNFold(sec.id)} hitSlop={8} style={s.chevWrap}>
-                    <WebHitSlop />
-                    <Chevron open={!nfolded.has(sec.id)} />
-                  </Pressable>
+                  <FoldCaret
+                    testID={`secfold-${sec.payload.name}`}
+                    open={!nfolded.has(sec.id)}
+                    onPress={() => toggleNFold(sec.id)}
+                    onLongPress={() => foldAllSections(!nfolded.has(sec.id))}
+                  />
                   {renamingSec === sec.id ? (
                     <Field
                       testID="nsec-rename"
@@ -1431,10 +1337,10 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
                     <WebHitSlop slop={6} />
                         <Text style={s.rowGripText}>≡</Text>
                       </View>
-                      {/* The tick, edit mode only. It is the whole point of
-                          edit mode here, so it leads the row rather than
-                          hiding behind the other controls. */}
-                      {pageEdit && (
+                      {/* The tick, ALWAYS — it leads the row rather than
+                          hiding behind the other controls, and it is the one
+                          control here that no longer waits on a mode. */}
+                      {(
                         <Pressable
                           testID={`recipe-pick-${n.payload.title}`}
                           accessibilityRole="checkbox"
@@ -1453,17 +1359,16 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
                       <Pressable
                         testID="note-row"
                         onPress={() => {
+                          if (justHeld.current) { justHeld.current = false; return; }
                           if (swipe.justSwiped()) return;
                           if (swipe.swiped) { swipe.clear(); return; }
-                          // In edit mode the row PICKS rather than opens. The
-                          // chevron that means "tap to open" is already gone
-                          // in edit mode, which is what makes the change of
-                          // meaning visible rather than surprising.
-                          if (pageEdit) { toggleSelected(n.id); return; }
-                          // DOUBLE TAP into edit mode, with the second tap
-                          // also selecting the row it landed on — arriving in
-                          // edit mode with nothing chosen would make the
-                          // gesture take two more taps than the long press.
+                          // A tap OPENS, in edit mode as much as out of it.
+                          // It used to pick instead while the mode was on,
+                          // which was the only way to reach the selection —
+                          // the circle beside it is that way now, so the row
+                          // keeps one meaning and the chevron stops having to
+                          // disappear to warn about the other.
+                          // DOUBLE TAP into edit mode.
                           const now = Date.now();
                           const prev = lastTap.current;
                           if (prev && prev.id === n.id && now - prev.at < 250) {
@@ -1471,7 +1376,6 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
                             tapTimer.current = null;
                             lastTap.current = null;
                             setPageEdit(true);
-                            setSelected([n.id]);
                             return;
                           }
                           lastTap.current = { id: n.id, at: now };
@@ -1481,16 +1385,20 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
                             setOpenId(n.id);
                           }, 250);
                         }}
-                        onLongPress={() => { setPageEdit(true); setSelected([n.id]); }}
+                        // Edit mode, and NOTHING selected by arriving in it:
+                        // the gesture asks for the grips, and a PickBar that
+                        // opened by itself would be answering a question
+                        // nobody asked.
+                        onLongPress={() => { justHeld.current = true; setPageEdit(true); }}
                         delayLongPress={350}
                         style={s.rowBody}
                       >
                         <Text style={s.rowTitle} numberOfLines={1}>{n.payload.title}</Text>
-                        {/* The chevron means "tap to open". While a delete is
-                            armed — swiped, or the whole page in edit mode —
-                            that is not what a tap does, so it goes away
-                            rather than sitting next to the X contradicting it. */}
-                        {!(pageEdit || swipe.swiped === n.id) && <Text style={s.chev}>›</Text>}
+                        {/* The chevron means "tap to open", which is now true
+                            in edit mode too — so it only goes away for a
+                            SWIPED row, where a tap puts the delete back
+                            rather than opening anything. */}
+                        {swipe.swiped !== n.id && <Text style={s.chev}>›</Text>}
                       </Pressable>
                       {/* The date itself is the other way in: Sean asked that
                           tapping a date in edit mode open the same editor. */}
@@ -1538,7 +1446,13 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
                 {/* Collapsible like my own, and the fold is MINE — device-local
                     AsyncStorage, never written to their store, never synced.
                     Folding their list away changes nothing on their screen. */}
-                <Pressable style={s.folderHead} onPress={() => toggleFolderFold(`sh:${f.id}`)} hitSlop={8}>
+                <Pressable
+                  style={s.folderHead}
+                  onPress={() => toggleFolderFold(`sh:${f.id}`)}
+                  onLongPress={() => foldAllFolders(!foldedFolders.has(`sh:${f.id}`))}
+                  delayLongPress={LONG_PRESS_MS}
+                  hitSlop={8}
+                >
                   <View style={s.chevWrap}><WebHitSlop /><Chevron open={!foldedFolders.has(`sh:${f.id}`)} color={T.text} /></View>
                   <Text style={[s.folderName, { backgroundColor: f.payload.color + '33' }]}>{f.payload.name}</Text>
                   {/* Beside the name, LEFT of the divider. It used to sit
@@ -1559,7 +1473,14 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
                           section id can never collide with one of mine, and
                           the fold is MINE — device-local, never written to
                           their store, never synced. */}
-                      <Pressable testID={`shared-secfold-${sec.payload.name}`} style={[s.secHead, s.sharedSecHead]} onPress={() => toggleNFold(`sh:${sec.id}`)} hitSlop={8}>
+                      <Pressable
+                        testID={`shared-secfold-${sec.payload.name}`}
+                        style={[s.secHead, s.sharedSecHead]}
+                        onPress={() => toggleNFold(`sh:${sec.id}`)}
+                        onLongPress={() => foldAllSections(!nfolded.has(`sh:${sec.id}`))}
+                        delayLongPress={LONG_PRESS_MS}
+                        hitSlop={8}
+                      >
                         <View style={s.chevWrap}><WebHitSlop /><Chevron open={!nfolded.has(`sh:${sec.id}`)} /></View>
                         <Text style={s.secName}>{sec.payload.name}</Text>
                       </Pressable>
@@ -1588,13 +1509,18 @@ export function Notes({ openNoteId, onOpenConsumed }: { openNoteId?: string | nu
       {/* What the selection is FOR. A bar rather than a top-bar button: it
           appears only when something is chosen, it says how many, and it sits
           where the thumb already is. */}
-      {pageEdit && selected.length > 0 && (
+      {/* ALWAYS SHOWING (Sean, 2026-09-16), on all three lists. It was the
+          only thing that said how many were picked and it appeared only once
+          something was — so the count you wanted before choosing was the one
+          thing you could not see, and All was behind a mode. */}
+      {(
         <PickBar
           prefix="recipes"
           count={selected.length}
+          onAll={() => setSelected(selectableIds)}
           onClear={() => setSelected([])}
           onDelete={deleteSelected}
-          action={{ label: 'Add to shopping list', testID: 'recipes-to-shopping', onPress: addSelectedToShopping }}
+          action={{ label: 'Add', testID: 'recipes-to-shopping', onPress: addSelectedToShopping }}
         />
       )}
       {/* Manage variants. A small window, an initially empty list, a + that
@@ -1701,6 +1627,8 @@ function SharedNotes({ viewKey, partner }: { viewKey: string; partner: string })
     sharedRecs
       .filter((r): r is Rec<'note'> => r.type === 'note' && r.payload.sectionId === sid)
       .sort(byRecOrd);
+  /** The folder picker's card, raised from the username menu's Folders row. */
+  const [pickOpen, setPickOpen] = useState(false);
   const [openShared, setOpenShared] = useState<Rec<'note'> | null>(null);
   const [sharedBodyEdit, setSharedBodyEdit] = useNoteScoped(openShared?.id ?? null, false);
   const [draft, setDraft] = useNoteScoped(openShared?.id ?? null, '');
@@ -1776,7 +1704,8 @@ function SharedNotes({ viewKey, partner }: { viewKey: string; partner: string })
 
   return (
     <View style={s.page}>
-      <TopBar title="Recipes" picker={<FolderPick app="notes" />} />
+      <TopBar title="Recipes" folders={{ dot: <FolderDot app="notes" />, onOpen: () => setPickOpen(true) }} />
+      <FolderPick app="notes" button={false} open={pickOpen} onClose={() => setPickOpen(false)} />
       <Scroll contentContainerStyle={s.scroll}>
         <View style={s.folderHead}>
           <Text style={s.sharedFolderChip}>@{shown}: {folder?.payload.name ?? '…'}</Text>

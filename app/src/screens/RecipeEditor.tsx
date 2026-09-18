@@ -17,14 +17,16 @@ import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { importedRecipeTitle, ingredientParts, isSubheader, orderIngredients, parseIngredient, recipeBody, recipeFromHtml, recipeFromPages, type Rec } from '@calmind/core';
 import { useStore } from '../store';
+import { addToShopping, shopMessage } from '../addToShopping';
 import { themed, T } from '../theme';
-import { CircleBtn, ConfirmDelete, Field, Scroll, WebHitSlop } from '../ui';
+import { CircleBtn, ConfirmDelete, Field, Pill, Scroll, WebHitSlop } from '../ui';
 import { OCR_UNSUPPORTED, ocrImages, ocrSupported } from '../components/ocr';
 import { UnitBadge } from '../components/IngredientBadge';
 import { RichText } from '../components/RichText';
 import { apiPost } from '../api';
 import { useRowDrag } from '../components/rowdrag';
 import { useSwipeLeft } from '../components/swiperow';
+import { useToast } from '../components/Toast';
 
 /** A row lifted from one index and set down at another. `to` is the index in
  *  the list with the dragged row already taken out, which is what the drag
@@ -50,7 +52,8 @@ export function RecipeEditor({ note, onClose, put }: {
   put?: (rec: Rec<'note'>) => void;
 }) {
   const insets = useSafeAreaInsets();
-  const { mutate, session } = useStore();
+  const { mutate, recs, session } = useStore();
+  const toast = useToast();
   const putNote = put ?? ((rec: Rec<'note'>) => mutate((e) => e.put(rec)));
   const parsed = recipeFromPages([note.payload.body]);
   // recipeFromPages CONSUMES the line it read as a title. When the note
@@ -302,6 +305,26 @@ export function RecipeEditor({ note, onClose, put }: {
     onClose();
   };
 
+  /**
+   * SHOP — this recipe's ingredients onto the shopping list, from here.
+   *
+   * Sean, 2026-09-18. The Recipes tab could already do it over a selection,
+   * which means going back out, turning on edit mode and ticking the recipe
+   * you were just looking at; the moment you want it is while you are reading
+   * the thing.
+   *
+   * It shops what is ON THE PAGE — the `ingredients` state — rather than
+   * re-reading the note. Those are the same thing by the time you can see
+   * them (every change autosaves), and taking the state is what makes a line
+   * added a second ago count.
+   *
+   * The pantry filter, where the rows land and what to say when nothing was
+   * added belong to `addToShopping`, which the Recipes tab shares.
+   */
+  const shop = () => {
+    toast(shopMessage(addToShopping(recs, mutate, [{ title: title || null, ingredients }]), true));
+  };
+
   return (
     <Modal animationType="slide" onRequestClose={finish}>
       <Scroll style={[s.page, { paddingTop: insets.top }]} contentContainerStyle={s.inner} scrollEnabled={ingDrag.dragIdx === null && stepDrag.dragIdx === null}>
@@ -312,6 +335,12 @@ export function RecipeEditor({ note, onClose, put }: {
           <CircleBtn testID="recipe-back" glyph="‹" size={32} label="Back to the note" onPress={finish} />
           <CircleBtn testID="recipe-link" glyph="🔗" label="Import from a link" size={32} onPress={() => setUrlOpen((v) => !v)} />
           <CircleBtn testID="recipe-photos" glyph="📷" label="Read a photo" size={32} onPress={() => void importPhotos()} />
+          {/* A WORD, not a glyph, where the three beside it are glyphs: this
+              is the only control on the page that writes somewhere other than
+              the recipe in front of you, and a cart would have read as a
+              place to go rather than a thing to do. A Pill, because that is
+              what this app's labelled buttons are. */}
+          <Pill testID="recipe-shop" label="Shop" compact onPress={shop} />
         </View>
         <Text style={s.h1}>Recipe</Text>
         {urlOpen && (

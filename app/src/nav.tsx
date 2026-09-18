@@ -1,20 +1,28 @@
 /**
- * The icon-only bottom tab bar: Recipes · Pantry · Add · Shopping, the
- * + a raised accent circle. The active tab wears a fixed circle behind its icon — a
- * highlight that can never move the tabs' spacing. The bar's contents cap at
- * the same width as the page column, so on a wide window the tabs stay under
- * the content instead of flying to the edges.
+ * The icon-only bottom tab bar: Recipes · Pantry · Shopping. The active tab
+ * wears a fixed circle behind its icon — a highlight that can never move the
+ * tabs' spacing. The bar's contents cap at the same width as the page column,
+ * so on a wide window the tabs stay under the content instead of flying to
+ * the edges.
  *
- * Upstream this has five: the calendar and habits sit either side of the +.
- * ChefMind keeps the shopping list and nothing else — Sean, 2026-08-21:
- * "remove reminders from ChefMind". A cooking app that also held a general
- * reminders list was holding CalMind's job.
+ * Upstream this has five: the calendar and habits sit either side of a raised
+ * accent + . ChefMind keeps the shopping list and nothing else — Sean,
+ * 2026-08-21: "remove reminders from ChefMind". A cooking app that also held
+ * a general reminders list was holding CalMind's job.
  *
  * The PANTRY joined it 2026-08-22 (Sean: "add a third tab to chefmind which is
- * a list of groceries on hand"), so the bar is four. Pantry sits beside
- * Recipes rather than beside Shopping, even though the two lists are the same
- * component: they are opposites — what you have and what you need — and
- * putting them adjacent is how you tap the wrong one.
+ * a list of groceries on hand"). Pantry sits beside Recipes rather than beside
+ * Shopping, even though the two lists are the same component: they are
+ * opposites — what you have and what you need — and putting them adjacent is
+ * how you tap the wrong one.
+ *
+ * The + went 2026-09-15 (Sean: "remove the + page from ChefMind"), and with it
+ * the only raised control the bar had, so every tab is now the same shape. It
+ * filed ONE kind — a recipe — into a section chosen from a dropdown, which is
+ * the thing the Recipes screen's own + beside each section does in place,
+ * already looking at the section it files into. Adding from the bar meant
+ * naming that destination blind. Shopping and pantry rows were never its job;
+ * each of those lists has its own + .
  *
  * The `reminder` RECORD type stays, and is not a leftover: the shopping rows
  * are reminder records in a folder of their own. What went is the screen.
@@ -22,9 +30,8 @@
 import { Pressable, StyleSheet, View , Platform } from 'react-native';
 import { themed, T, PAGE_MAX_WIDTH } from './theme';
 import { BasketIcon, PageIcon, PantryIcon } from './components/KindIcons';
-import { DrawnGlyph } from './ui';
 
-export type Tab = 'notes' | 'pantry' | 'add' | 'shopping';
+export type Tab = 'notes' | 'pantry' | 'shopping';
 
 // Emoji presentation (VS16) so every glyph draws in colour — the plain-text
 // checkbox was near-invisible on the dark bar.
@@ -35,7 +42,7 @@ export type Tab = 'notes' | 'pantry' | 'add' | 'shopping';
 // still say 'notes', because renaming those would be a migration of his data
 // to change a label.
 const TAB_LABEL: Record<Tab, string> = {
-  notes: 'Recipes', pantry: 'Pantry', add: 'Add', shopping: 'Shopping',
+  notes: 'Recipes', pantry: 'Pantry', shopping: 'Shopping',
 };
 
 // No icon field: the bar draws its own SVG glyphs by key (see below), and
@@ -44,7 +51,6 @@ const TAB_LABEL: Record<Tab, string> = {
 const TABS: { key: Tab }[] = [
   { key: 'notes' },
   { key: 'pantry' },
-  { key: 'add' },
   { key: 'shopping' },
 ];
 
@@ -52,27 +58,16 @@ export function TabBar({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
   return (
     <View style={s.barOuter}>
       <View style={s.bar}>
-        {TABS.map(({ key }) =>
-          key === 'add' ? (
-            <Pressable key={key} testID={`tab-${key}`} accessibilityRole="button" accessibilityLabel={TAB_LABEL[key]} onPress={() => onTab(key)} style={s.addBtn} hitSlop={6}>
-              {/* Drawn, not typed. As a Text this '+' sat 2.56px BELOW the
-                  circle's centre — the line box reserves descender space a
-                  '+' never uses — which on a 44pt accent button is the most
-                  visible instance of it in the app. A stroked cross has no
-                  baseline to be low against. */}
-              <DrawnGlyph glyph="+" size={26} color={T.accentInk} />
-            </Pressable>
-          ) : (
-            <Pressable key={key} testID={`tab-${key}`} accessibilityRole="button" accessibilityLabel={TAB_LABEL[key]} onPress={() => onTab(key)} style={s.tab} hitSlop={6}>
-              <View style={[s.halo, tab === key && s.haloOn]}>
-                {/* One SVG language for the whole bar — no emoji. */}
-                {key === 'notes' && <PageIcon color={tab === key ? T.text : T.dim} />}
-                {key === 'pantry' && <PantryIcon color={tab === key ? T.text : T.dim} />}
-                {key === 'shopping' && <BasketIcon color={tab === key ? T.text : T.dim} />}
-              </View>
-            </Pressable>
-          ),
-        )}
+        {TABS.map(({ key }) => (
+          <Pressable key={key} testID={`tab-${key}`} accessibilityRole="button" accessibilityLabel={TAB_LABEL[key]} onPress={() => onTab(key)} style={s.tab} hitSlop={6}>
+            <View style={[s.halo, tab === key && s.haloOn]}>
+              {/* One SVG language for the whole bar — no emoji. */}
+              {key === 'notes' && <PageIcon color={tab === key ? T.text : T.dim} />}
+              {key === 'pantry' && <PantryIcon color={tab === key ? T.text : T.dim} />}
+              {key === 'shopping' && <BasketIcon color={tab === key ? T.text : T.dim} />}
+            </View>
+          </Pressable>
+        ))}
       </View>
     </View>
   );
@@ -91,24 +86,17 @@ const s = themed(() => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-around',
-    // Web spreads 640px wide; the suite's bar keeps its icons closer.
-    // Four, not five, so the web bar narrows with them — 420px of
-    // space-around around four icons parks them at the edges of a gap nothing
-    // fills.
-    ...(Platform.OS === 'web' ? { alignSelf: 'center' as const, width: 340, maxWidth: '100%' as const } : null),
+    // Web spreads 640px wide; the suite's bar keeps its icons closer, and the
+    // number shrinks with the tab COUNT — space-around over a width meant for
+    // more icons than there are parks them at the edges of a gap nothing
+    // fills. 420 held five, 340 held four, 255 holds three at about the same
+    // gap between them.
+    ...(Platform.OS === 'web' ? { alignSelf: 'center' as const, width: 255, maxWidth: '100%' as const } : null),
     paddingVertical: 6,
   },
   tab: { alignItems: 'center', justifyContent: 'center' },
   halo: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
   haloOn: { backgroundColor: T.surface2 },
-  addBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: T.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
 }));
 
 /**

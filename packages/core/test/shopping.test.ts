@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { shoppingLines, shoppingRows } from '../src/shopping';
+import { mergeIntoList, pantryKey, shoppingLines, shoppingRows } from '../src/shopping';
 
 const r = (title: string, ingredients: string[]) => ({ title, ingredients });
 
@@ -132,6 +132,151 @@ describe('the pantry', () => {
 
   it('an empty pantry changes nothing', () => {
     expect(shoppingLines([r('a', ['3 eggs'])], [])).toEqual(['3 eggs']);
+  });
+
+  it('a measure written in WORDS is still a measure', () => {
+    // Sean, 2026-09-18: "if i have salt in the pantry, and it calls for a
+    // pinch of salt or some amount of salt, it shouldn't go on the shopping
+    // list." '1 tsp salt' always worked, because the parser takes a numeric
+    // measure off the name; 'a pinch of salt' is a line with no quantity at
+    // all, so the whole phrase WAS the name and no pantry row could equal it.
+    const pantry = ['salt', 'olive oil', 'thyme'];
+    expect(shoppingLines([r('a', [
+      'a pinch of salt',
+      'pinch of salt',
+      'a pinch salt',
+      'salt to taste',
+      'a splash of olive oil',
+      'some olive oil',
+      'olive oil, for frying',
+      'a few sprigs of thyme',
+    ])], pantry)).toEqual([]);
+  });
+
+  it('two things on one line go only when BOTH are on hand', () => {
+    // The commonest line in any recipe. Half of it cannot be crossed off, so
+    // a cook with salt and no pepper still gets the line, whole.
+    const line = ['Salt and pepper to taste'];
+    expect(shoppingLines([r('a', line)], ['salt', 'pepper'])).toEqual([]);
+    expect(shoppingLines([r('a', line)], ['salt'])).toEqual(['Salt and pepper to taste']);
+    expect(shoppingLines([r('a', line)], [])).toEqual(['Salt and pepper to taste']);
+  });
+
+  it('a KIND of a staple is the staple', () => {
+    // Sean, 2026-09-18: "i have sugar in my pantry yet these both showed up",
+    // of a list carrying three lines of granulated sugar and two of all
+    // purpose flour. A word that narrows a staple without changing what you
+    // come home with is read past, on both sides.
+    expect(shoppingLines([r('a', [
+      '1/4 cup granulated sugar',
+      '2 cups (500 grams) all purpose flour',
+      'kosher salt',
+      'sea salt, to taste',
+    ])], ['sugar', 'flour', 'salt'])).toEqual([]);
+    // …and the cupboard holding the KIND holds the staple too.
+    expect(shoppingLines([r('a', ['2 cups flour'])], ['unbleached all purpose flour'])).toEqual([]);
+  });
+
+  it('a measure the line said TWICE is still a measure', () => {
+    // A real line off Sean's list: the parser takes the first measure, the
+    // bracketed one is an aside, and what is left as the NAME begins '1
+    // tablespoon'. It sat on a list under a pantry that had sugar in it.
+    expect(shoppingLines(
+      [r('a', ['1/3 cup (70 grams) + 1 tablespoon granulated sugar'])], ['sugar'],
+    )).toEqual([]);
+  });
+
+  it('half an egg is an egg', () => {
+    // Sean, same day: "things like egg yolk should realize i already have
+    // eggs". Named outright rather than by a rule, because 'white' is exactly
+    // the word a general rule must not be allowed to drop.
+    expect(shoppingLines([r('a', ['3 egg yolks', '1 egg white', '2 large eggs'])], ['eggs']))
+      .toEqual([]);
+  });
+
+  it('still does not claim a DIFFERENT thing that reads similarly', () => {
+    // The standing rule, and what every list above is bounded by: a variety
+    // word narrows a staple, and these name another bag on the shelf.
+    expect(shoppingLines([r('a', ['2 cups almond flour'])], ['flour']))
+      .toEqual(['473 ml almond flour']);
+    expect(shoppingLines([r('a', ['1 cup powdered sugar'])], ['sugar']))
+      .toEqual(['237 ml powdered sugar']);
+    expect(shoppingLines([r('a', ['1 cup brown sugar'])], ['sugar']))
+      .toEqual(['237 ml brown sugar']);
+    // Colour words especially: white sugar is granulated sugar, but white
+    // wine is not red wine, and one list cannot tell those apart.
+    expect(shoppingLines([r('a', ['1 cup white wine'])], ['wine']))
+      .toEqual(['237 ml white wine']);
+    expect(shoppingLines([r('a', ['freshly ground black pepper'])], ['pepper']))
+      .toEqual(['freshly ground black pepper']);
+  });
+
+  it('takes a vague word off the FRONT only', () => {
+    // 'chocolate drops' is a thing to buy; eating the 'drops' off it would
+    // let a pantry row for chocolate claim it.
+    expect(shoppingLines([r('a', ['chocolate drops'])], ['chocolate'])).toEqual(['chocolate drops']);
+    expect(shoppingLines([r('a', ['a drop of vanilla'])], ['vanilla'])).toEqual([]);
+  });
+
+  it('reads a pantry row the same way it reads a recipe line', () => {
+    expect(pantryKey('a pinch of salt')).toBe('salt');
+    expect(pantryKey('salt to taste')).toBe('salt');
+    expect(pantryKey('olive oil, for frying')).toBe('olive oil');
+    // Never emptied: a row that says only 'a pinch' says 'a pinch'.
+    expect(pantryKey('a pinch')).toBe('a pinch');
+    expect(pantryKey('')).toBe('');
+  });
+});
+
+describe('folding an add into the list already there', () => {
+  // Sean, 2026-09-18: "duplicate ingredients i don't have in my pantry should
+  // always be combined automatically." Two recipes added minutes apart were
+  // leaving two lines of all purpose flour.
+  it('adds the new amount to the row that is already there', () => {
+    const { kept, added } = mergeIntoList(['500 g all purpose flour'], ['25 g all purpose flour']);
+    expect(kept).toEqual(['525 g all purpose flour']);
+    expect(added).toEqual([]);
+  });
+
+  it('keeps the list the same length and in the same order', () => {
+    // The caller has ids, an order somebody dragged the rows into and wording
+    // they may have edited; a rebuild from strings throws all three away.
+    const { kept, added } = mergeIntoList(
+      ['3 eggs', '500 g flour', '2 onions'],
+      ['1 onion', '250 ml milk'],
+    );
+    expect(kept).toEqual(['3 eggs', '500 g flour', '3 onions']);
+    expect(added).toEqual(['250 ml milk']);
+  });
+
+  it('a second line folds into a row the first one just changed', () => {
+    const { kept } = mergeIntoList(['100 g butter'], ['50 g butter', '25 g butter']);
+    expect(kept).toEqual(['175 g butter']);
+  });
+
+  it('leaves a different thing alone, however alike it reads', () => {
+    const { kept, added } = mergeIntoList(['500 g flour'], ['200 g almond flour']);
+    expect(kept).toEqual(['500 g flour']);
+    expect(added).toEqual(['200 g almond flour']);
+  });
+
+  it('does not add across dimensions — it has no density to do it with', () => {
+    // The rule this file has kept since the day conversion arrived: grams and
+    // cups of the same thing are two lines, and a list that invents a density
+    // is worse than one that repeats itself.
+    const { kept, added } = mergeIntoList(['500 g flour'], ['2 cups flour']);
+    expect(kept).toEqual(['500 g flour']);
+    expect(added).toEqual(['473 ml flour']);
+  });
+
+  it('the leftovers meet each other on the loose reading too', () => {
+    const { kept, added } = mergeIntoList([], ['1 onion', '2 chopped onions']);
+    expect(kept).toEqual([]);
+    expect(added).toEqual(['3 onions']);
+  });
+
+  it('an empty add changes nothing', () => {
+    expect(mergeIntoList(['3 eggs'], [])).toEqual({ kept: ['3 eggs'], added: [] });
   });
 });
 
