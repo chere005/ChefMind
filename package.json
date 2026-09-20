@@ -7,8 +7,9 @@
     "desktop"
   ],
   "scripts": {
-    "test": "npm run test:core",
+    "test": "npm run test:core && npm run test:app",
     "test:core": "npm -w @calmind/core run test -- --run",
+    "test:app": "npx vitest run --root app",
     "web": "npm -w chefmind-app run web",
     "export:web": "npm -w chefmind-app exec expo export -- -p web",
     "desktop": "npm -w @chefmind/desktop run build",
