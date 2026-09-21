@@ -314,7 +314,7 @@ PY
   # the failure the single `exit 1` here used to catch, and it still is.
   [ "$OK" -gt 0 ] || { echo "not one phone took $SCHEME.app" >&2; exit 1; }
   # No watch branch: watchOS is not a target here — watch.ts and the
-  # watch/widget targets went with Calendar and Habits (README).
+  # watch/widget targets went with Calendar and Habits (ARCHITECTURE.md).
 fi
 
 # ----------------------------------------------------------------- Android

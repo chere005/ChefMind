@@ -7,8 +7,8 @@ and is imported here; this file holds only what is true of THIS repo.
 CalMind's recipes plus a shopping list and a pantry, on CalMind's server and
 CalMind's accounts. (Reminders were removed 2026-08-21 on Sean's word — the
 `reminder` record type stays, because the shopping AND pantry rows are reminder
-records.) A CLONE of CalMind's `apps/app` and `packages/core`. `README.md` is
-the map.
+records.) A CLONE of CalMind's `apps/app` and `packages/core`. `README.md` is the
+short front door and `ARCHITECTURE.md` is the map.
 
 This was a directory inside the CalMind repo until 2026-08-22, when it was
 extracted — history preserved — into its own repo. The upstream it clones
@@ -24,7 +24,7 @@ through lives THERE, not here.
   `core/grocery.ts` and `core/variant.ts` (no twins upstream),
   `core/normalize.ts` (no calendar or habit starters, plus the shopping and
   pantry folders), the `shopping` and `pantry` flags on `Folder`, `variants` on
-  `Note`, and the screens listed in the README's "what was taken out".
+  `Note`, and the screens listed in `ARCHITECTURE.md`'s "what was taken out".
 - **The space is not configurable.** `SYNC_SPACE` in `app/src/api.ts` is a
   constant. A build that could be aimed at CalMind's records would merge two
   stores into whichever one synced last, silently.
@@ -40,7 +40,7 @@ through lives THERE, not here.
   (Cargo.lock follows). `ios.buildNumber`/`android.versionCode` move by hand
   per device build, not per dtp. What the lane ships, in what order, and what
   it refuses is **"The release lane, end to end"** below — one account, which
-  the README points at rather than repeating.
+  `ARCHITECTURE.md` points at rather than repeating.
   The old `chefmind-` namespace existed because two apps shared
   CalMind's repo; this repo's history carries those releases retagged as
   1.0.0/1.0.1/1.1.0, and CalMind no longer holds a `chefmind-` tag at all.
@@ -124,9 +124,9 @@ through lives THERE, not here.
 - **`npm run test:deploy`** proves the deploy guards by breaking copies of
   `deploy.sh` and watching each copy stop. It needs no network, no SSH and no
   `deploy.conf`, so it is always runnable.
-- **Running it locally**: the three-line recipe is in the README (export the
-  web build, patch its head, serve it with `e2e-router.php`) — plus CalMind's
-  own API, see the traps.
+- **Running it locally**: the three-line recipe is in `ARCHITECTURE.md`
+  (export the web build, patch its head, serve it with `e2e-router.php`) —
+  plus CalMind's own API, see the traps.
 - **Workspaces**: an npm workspaces monorepo — `packages/*`, `app`, `desktop`.
 
 ## Platforms — what ships where, and how
@@ -157,8 +157,8 @@ through lives THERE, not here.
   MyCalMind from the phone to make room describes a constraint that is gone.
 
 - **watchOS**: no target. `watch.ts` and the watch/widget targets were taken
-  out along with Calendar and Habits (see README's "What was taken out") —
-  there is nothing to install to a paired watch.
+  out along with Calendar and Habits (see `ARCHITECTURE.md`'s "What was taken
+  out") — there is nothing to install to a paired watch.
 - **Android**: builds, installs, and launches on a local emulator via this
   repo's `tools/build-platforms.sh --android`. Confirmed working
   2026-08-22.
