@@ -145,10 +145,17 @@ through lives THERE, not here.
   (`.github/workflows/desktop-windows.yml`, dispatched after a dtp push) —
   Tauri does not cross-compile, so it is the ONE platform this repo cannot
   produce for itself.
-- **iOS**: builds and installs to the physical phone via this repo's
-  `tools/build-platforms.sh --ios` (devicectl) — one of the phone's 3 free-tier
-  device slots. Reinstalled 2026-08-22 after MyCalMind was freed from the
-  phone to make room.
+- **iOS**: builds once and installs to ALL THREE paired phones via this
+  repo's `tools/build-platforms.sh --ios` (devicectl) — Sean's, Autumn's and
+  Patricia's, since 2026-09-21. A phone that refuses is warned about and
+  skipped; the step fails only when none of them took it.
+
+  There is no per-phone app cap any more. Apple's free-tier limit of 3 apps
+  on a device does not apply: the team (2LGYTL3FSJ) is PAID, its profile
+  carrying `TimeToLive 365` where a personal team's carries 7. Sean,
+  2026-09-21: "no more caps per phone." So the 2026-08-22 note about freeing
+  MyCalMind from the phone to make room describes a constraint that is gone.
+
 - **watchOS**: no target. `watch.ts` and the watch/widget targets were taken
   out along with Calendar and Habits (see README's "What was taken out") —
   there is nothing to install to a paired watch.
@@ -244,9 +251,12 @@ its lane rather than reaching in afterwards.
 CoreMind is still what ships the SUITE at once: `sh bin/dtp.sh all --full
 --platforms` runs every app's tdtp lane in dependency order (core first, then
 CalMind, then this repo — ChefMind's deploy depends on CalMind's live API
-being up). Remember the phone's hard cap of 3 installed apps at a time
-(currently CalMind, ChefMind, AcctMind — MyCalMind is deliberately not one of
-them, to stay under that cap).
+being up). There is no per-phone app cap to stay under — see **iOS** in
+Platforms above: the team is paid, and Sean settled it on 2026-09-21 with
+"no more caps per phone". MyCalMind is installed by the suite lane too, as
+of the same day: it was held back only to leave a slot free on a phone that
+no longer rations them, and it was already sitting on Sean's own phone at
+1.8.0 while the rule said it never got there.
 
 ## The three lists, and the rules they keep
 
