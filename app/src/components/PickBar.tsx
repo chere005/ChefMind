@@ -22,8 +22,16 @@
  * It was Recipes' own inline JSX until 2026-08-22, and copying it across
  * would have been three bars drifting apart from the first change onwards.
  *
- * ChefMind only — upstream's Notes screen has no selection to act on, so
- * there is no twin of this file in CalMind to keep it in step with.
+ * NOT ChefMind only any more, and this file is CANON as of 2026-09-21:
+ * `CoreMind/canon/app/src/components/PickBar.tsx` holds these exact bytes,
+ * and this repo is the `exact` row that keeps them honest. Upstream's Notes
+ * screen still has no selection to act on, so CalMind carries no twin — but
+ * AcctMind does, as a noted `fork`, because its ledger has one palette and
+ * no `themed()` and draws its controls at TAP rather than buying the area
+ * back with `WebHitSlop`. Same four controls, same order, same two-press
+ * Delete; it adds the selection's sum, which is the thing a ledger picks
+ * rows FOR and this list has no use for. A change to the BEHAVIOUR here is
+ * owed to that copy.
  */
 import { useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
