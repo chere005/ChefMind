@@ -128,10 +128,70 @@ if [ "$WANT_MAC" = 1 ]; then
   # INSTALL IT. A build sitting in target/release/bundle/macos/ is not a
   # deploy — it is the thing nobody looks at while the app in /Applications
   # goes stale.
+  #
+  # WHOSE WINDOW IS THIS. Sean, 2026-09-21: "make sure to reopen already
+  # opened apps in a dtp.. i was looking at an old acctmind". The install
+  # below is `rm -rf` then `cp -R`, and macOS keeps a RUNNING app's code
+  # mapped from the bundle it launched from — so replacing those files under a
+  # live app changes nothing he can see, and the window keeps the JS it
+  # started with. That is exactly how he spent an afternoon reading an old
+  # AcctMind while the same build was live on the web, on his phone and in
+  # /Applications. So the app gets quit first if it is open, and put back
+  # afterwards if — and only if — it was.
+  #
+  # MATCHED ON THE BUNDLE PATH, NEVER THE APP NAME, because the two are not
+  # the same string: the executable inside AcctMind.app is
+  # Contents/MacOS/acctmind-desktop, so `pgrep -x AcctMind` finds nothing and
+  # the whole feature silently does not happen. The name is taken off
+  # $APPBUNDLE, the same variable the copy below uses, so the check and the
+  # install can never disagree about which app this is. The path also scopes
+  # it to the INSTALLED copy: a bundle someone is running out of
+  # target/release/bundle is not the one being replaced here.
+  APPNAME=$(basename "$APPBUNDLE" .app)
+  WAS_RUNNING=0
+  if pgrep -f "/Applications/$APPNAME.app/Contents/MacOS/" >/dev/null 2>&1; then
+    WAS_RUNNING=1
+    # ASKED, NEVER KILLED. `quit app` is the gesture the suite's desktop smoke
+    # uses (CalMind's desktop/smoke.sh; this repo has no smoke.sh of its own
+    # yet, which is why the call to one above is guarded by `[ -f ]`): a
+    # release has no business sending a signal to an app that holds the only
+    # copy of something unsaved. And the wait is not optional either —
+    # copying over a live bundle is half of what this is avoiding. If it has
+    # not gone within eight seconds we say so and install anyway: a stale
+    # window is a smaller problem than a skipped deploy.
+    #
+    # WHEN THIS REPO GAINS THAT SMOKE it must aim at the bundle it just built,
+    # never at the app by name: CalMind's quits `app "CalMind"` and falls back
+    # to `pkill -f` on the executable, either of which would close HIS
+    # installed copy minutes before the check above ever runs — and then the
+    # reopen below never learns there was a window to give back, which is the
+    # same afternoon over again.
+    echo "    quitting $APPNAME — it is open, and a copy over a live bundle would change nothing on screen"
+    osascript -e "quit app \"$APPNAME\"" >/dev/null 2>&1 || true
+    WAITED=0
+    while pgrep -f "/Applications/$APPNAME.app/Contents/MacOS/" >/dev/null 2>&1; do
+      [ "$WAITED" -lt 8 ] || { echo "warning: $APPNAME would not quit — installing over it anyway" >&2; break; }
+      sleep 1
+      WAITED=$((WAITED + 1))
+    done
+  fi
   rm -rf "/Applications/$(basename "$APPBUNDLE")"
   cp -R "$APPBUNDLE" /Applications/ \
     || { echo "copying the .app into /Applications failed" >&2; exit 1; }
   echo "    installed: /Applications/$(basename "$APPBUNDLE")"
+  # AND GIVE HIM HIS WINDOW BACK — only if it was there to begin with. An app
+  # he had closed stays closed: a release that conjures windows onto his
+  # desktop is its own kind of rude. Best-effort from here down, like every
+  # step of this since the quit: failing to reopen a window must never turn a
+  # release that shipped into a lane that failed, so nothing below touches the
+  # exit status.
+  if [ "$WAS_RUNNING" = 1 ]; then
+    if open "/Applications/$APPNAME.app" >/dev/null 2>&1; then
+      echo "    reopened $APPNAME — it was running before this release"
+    else
+      echo "warning: $APPNAME was running before this release and would not reopen" >&2
+    fi
+  fi
 fi
 
 # --------------------------------------------------------------------- iOS
