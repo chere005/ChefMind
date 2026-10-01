@@ -133,19 +133,39 @@ fi
 
 check_api
 
-echo "==> typecheck"
-TSLOG=$(mktemp)
-for P in packages/core app; do
-  if ! npx tsc --noEmit -p "$P" >"$TSLOG" 2>&1; then
-    cat "$TSLOG" >&2; rm -f "$TSLOG"
-    echo "$P typecheck failed — not deploying" >&2; exit 1
+# ONCE PER TREE, NOT ONCE PER SCRIPT. Under a tdtp, tools/dtp.sh's --full pass
+# has just run this same typecheck and this same core suite. It hands down,
+# in CHEF_GATES_PASSED, the content key of the tree they passed on
+# (tools/gate-key.mjs: everything tsc and vitest can read, minus only the
+# version fields the bump rewrites). When the tree here still hashes to
+# exactly that, running them again would check identical bytes twice, so
+# they stand down and say so. Every other case runs them as always: a plain
+# dtp, this script run by hand, a file saved mid-lane, a key that cannot be
+# computed. Those runs can still fail and refuse the deploy.
+GATES_KEY=""
+if [ -n "${CHEF_GATES_PASSED:-}" ]; then
+  GATES_KEY=$(node tools/gate-key.mjs) || GATES_KEY=""
+fi
+if [ -n "$GATES_KEY" ] && [ "$GATES_KEY" = "$CHEF_GATES_PASSED" ]; then
+  echo "==> typecheck + core tests: passed in this lane's full run, on this exact tree (key $(printf '%.12s' "$GATES_KEY")…) — not run twice"
+else
+  if [ -n "${CHEF_GATES_PASSED:-}" ]; then
+    echo "==> this is not the tree the lane's full run checked — checking it here"
   fi
-done
-rm -f "$TSLOG"
+  echo "==> typecheck"
+  TSLOG=$(mktemp)
+  for P in packages/core app; do
+    if ! npx tsc --noEmit -p "$P" >"$TSLOG" 2>&1; then
+      cat "$TSLOG" >&2; rm -f "$TSLOG"
+      echo "$P typecheck failed — not deploying" >&2; exit 1
+    fi
+  done
+  rm -f "$TSLOG"
 
-echo "==> core tests"
-npm run test:core --silent >/dev/null 2>&1 \
-  || { echo "core tests failed — not deploying" >&2; exit 1; }
+  echo "==> core tests"
+  npm run test:core --silent >/dev/null 2>&1 \
+    || { echo "core tests failed — not deploying" >&2; exit 1; }
+fi
 
 # The API is CalMind's, so ITS suite is the one that gates the behaviour this
 # client depends on — the sync space above all. That server lives in the

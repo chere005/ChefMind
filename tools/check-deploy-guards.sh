@@ -89,6 +89,152 @@ else
 fi
 rm -f "$copy"
 
+echo "deploy.sh — the typecheck and core suite stand down for one tree only"
+# Under a tdtp they stand down when the tree still hashes to the key the
+# lane's --full pass checked (tools/gate-key.mjs). That is a gate that can
+# switch itself OFF, so what is proved here is every way it must stay ON.
+# In each copy the API answer is canned, and tsc is replaced by `false`. A
+# copy that runs the typecheck therefore REFUSES, and says which gate did
+# it. A copy that skips the typecheck reaches an `exit 0` placed just past
+# the gates. A refusal only counts when it is the typecheck's: a copy that
+# died of something else would prove nothing about this.
+gates_copy() { # gates_copy <file> [extra sed expr]
+  sed -e 's|^  ANSWER=$(api_spaces .*|  ANSWER=\x27{"ok":true,"spaces":["chef"]}\x27|' \
+      -e 's|if ! npx tsc --noEmit -p "$P"|if ! false|' \
+      -e 's|^CALMIND_REPO=|echo "[guardcheck] past the gates"; exit 0; CALMIND_REPO=|' \
+      -e "${2:-s|^#unchanged\$|#unchanged|}" \
+      -e 's|^\( *\)ssh |\1echo "   [guardcheck] would ssh: " |' \
+      -e 's|^\( *\)rsync |\1echo "   [guardcheck] would rsync: " |' \
+      -e 's|^\( *\)curl |\1echo "   [guardcheck] would curl: " |' \
+      deploy.sh > "$1"
+  chmod +x "$1"
+}
+refuses_at_typecheck() { # <label> <CHEF_GATES_PASSED or "-" for unset> [extra sed expr]
+  label="$1"; passed="$2"; copy="./_guardcheck-gates-$$.sh"
+  gates_copy "$copy" "${3:-}"
+  if [ "$passed" = - ]; then
+    env -u CHEF_GATES_PASSED "$copy" --yes-prod >"$TMP/gates" 2>&1 && rc=0 || rc=$?
+  else
+    CHEF_GATES_PASSED="$passed" "$copy" --yes-prod >"$TMP/gates" 2>&1 && rc=0 || rc=$?
+  fi
+  if [ "$rc" != 0 ] && grep -q 'typecheck failed — not deploying' "$TMP/gates"; then
+    ok "$label"
+  else
+    bad "$label — exit $rc, and the typecheck did not refuse"
+    sed -n '1,6p' "$TMP/gates" | sed 's/^/      /'
+  fi
+  rm -f "$copy"
+}
+KEY=$(node tools/gate-key.mjs) || KEY=""
+case "$KEY" in
+  [0-9a-f]*) [ "${#KEY}" -eq 64 ] && ok "tools/gate-key.mjs keys this tree" || bad "gate-key printed '$KEY', not a 64-hex key" ;;
+  *) bad "tools/gate-key.mjs could not key this tree" ;;
+esac
+refuses_at_typecheck "runs them when no lane passed a key (plain dtp, or by hand)" -
+refuses_at_typecheck "runs them when the lane's key is some other tree's" \
+  0000000000000000000000000000000000000000000000000000000000000000
+refuses_at_typecheck "runs them when the key cannot be computed now" "$KEY" \
+  's|GATES_KEY=$(node tools/gate-key.mjs)|GATES_KEY=$(false)|'
+refuses_at_typecheck "runs them when the key comes back empty and the lane's is empty too" "" \
+  's|GATES_KEY=$(node tools/gate-key.mjs)|GATES_KEY=$(printf "")|'
+
+copy="./_guardcheck-gates-$$.sh"
+gates_copy "$copy"
+CHEF_GATES_PASSED="$KEY" "$copy" --yes-prod >"$TMP/gates" 2>&1 && rc=0 || rc=$?
+if [ "$rc" = 0 ] && grep -q 'not run twice' "$TMP/gates" && ! grep -q '==> typecheck$' "$TMP/gates"; then
+  ok "and stands down for the tree the lane's full run passed"
+else
+  bad "the matching key did not skip the repeat run — exit $rc, see $TMP/gates"
+fi
+rm -f "$copy"
+
+echo "tools/gate-key.mjs — the key moves with every input"
+# The other half: the key must CHANGE whenever anything tsc or vitest reads
+# changes, or "the same key" stops meaning "the same tree". Proved on a
+# mirror of exactly what the key reads (the --files list, plus the
+# node_modules names and npm's lock), never on this checkout. Each case
+# changes one thing in a fresh clone of the mirror, and the key must move.
+# The first case runs the other way round: the bump must NOT move it, or the
+# reuse would never fire.
+T="$TMP/tree"
+# One node process rather than one cp per file: the files the key lists, the
+# two scripts the cases run, desktop/package.json (read by the lock sync,
+# never keyed), and each node_modules as the key sees it: its loose files
+# (npm's .package-lock.json) and its package NAMES as empty directories.
+node tools/gate-key.mjs --files | node -e '
+  const fs = require("fs"), path = require("path"), T = process.argv[1];
+  const put = (f) => { fs.mkdirSync(path.join(T, path.dirname(f)), { recursive: true }); fs.copyFileSync(f, path.join(T, f)); };
+  const list = fs.readFileSync(0, "utf8").split("\n").filter(Boolean);
+  for (const f of [...list, "tools/gate-key.mjs", "tools/sync-lock-versions.mjs", "desktop/package.json"]) put(f);
+  for (const d of ["node_modules", "app/node_modules", "packages/core/node_modules"]) {
+    if (!fs.existsSync(d)) continue;
+    for (const n of fs.readdirSync(d)) {
+      const p = path.join(d, n);
+      if (!fs.statSync(p).isDirectory()) { put(p); continue; }
+      const kids = n.startsWith("@") ? fs.readdirSync(p).map((m) => path.join(p, m)) : [p];
+      for (const k of kids) fs.mkdirSync(path.join(T, k), { recursive: true });
+    }
+  }' "$T"
+K0=$( cd "$T" && node tools/gate-key.mjs ) || K0=""
+if [ -n "$K0" ] && [ "$K0" = "$KEY" ]; then
+  ok "the mirror keys the same as this tree (it holds everything the key reads)"
+else
+  bad "the mirror keys differently from this tree — the cases below would prove nothing"
+fi
+
+n=0
+mutant() { # mutant <label> <same|moves|nokey> <shell run inside a fresh copy of the mirror> [env for the key]
+  n=$((n + 1)); M="$TMP/m$n"
+  cp -cR "$T" "$M" 2>/dev/null || cp -R "$T" "$M"
+  # A change that did not apply proves nothing either way, and for the bump
+  # it would make "leaves it alone" pass by doing nothing. So it is a failure.
+  if ! ( cd "$M" && eval "$3" ) >/dev/null 2>&1; then
+    bad "$1 — the change itself did not apply"; rm -rf "$M"; return 0
+  fi
+  K=$( cd "$M" && env ${4:-} node tools/gate-key.mjs 2>/dev/null ) && krc=0 || krc=$?
+  case "$2" in
+    same)  [ "$K" = "$K0" ] && ok "$1" || bad "$1 — the key moved" ;;
+    moves) [ -n "$K" ] && [ "$K" != "$K0" ] && ok "$1" || bad "$1 — the key did NOT move" ;;
+    nokey) [ "$krc" != 0 ] && [ -z "$K" ] && ok "$1" || bad "$1 — it still printed a key" ;;
+  esac
+  rm -rf "$M"
+}
+BUMP='CUR=$(node -p "require(\"./package.json\").version"); NEW=9.99.0
+  for F in package.json app/app.json desktop/package.json; do perl -i -pe "s|\"version\": \"\Q$CUR\E\"|\"version\": \"$NEW\"|" "$F"; done
+  node tools/sync-lock-versions.mjs && grep -q "\"version\": \"$NEW\"" package.json \
+    && grep -q "\"version\": \"$NEW\"" app/app.json && grep -q "\"version\": \"$NEW\"" package-lock.json'
+mutant "the version bump leaves it alone"                       same  "$BUMP"
+mutant "an edited core test moves it"                           moves 'printf "\n// x\n" >> packages/core/test/order.test.ts'
+mutant "a test fixture moves it"                                moves 'printf "x" >> packages/core/test/fixtures/bbcgoodfood-scones.html'
+mutant "a new file outside app/src and app/test moves it"       moves 'mkdir -p app/e2e && echo "export const x: number = \"no\"" > app/e2e/stray.ts'
+mutant "a new test in a dot-dir moves it (vitest globs dot files)" moves 'mkdir -p app/.hidden && echo "x" > app/.hidden/x.test.ts'
+mutant "a deleted test moves it"                                moves 'rm app/test/rowslots.test.ts'
+mutant "an edited dist bundle moves it (tsc reads app/dist)"    moves 'f=$(find app/dist -name "*.js" | head -1); printf "//x" >> "$f"'
+mutant "a spec vector moves it"                                 moves 'printf " " >> spec/parse.json'
+mutant "tsconfig.base.json moves it"                            moves 'printf " " >> tsconfig.base.json'
+mutant "app/tsconfig.json moves it"                             moves 'printf " " >> app/tsconfig.json'
+mutant "app.json beyond its version moves it"                   moves 'perl -i -pe "s|\"name\": \"ChefMind\"|\"name\": \"ChefMind2\"|" app/app.json'
+mutant "a root script moves it"                                 moves 'perl -i -pe "s|\"test:core\": \"|\"test:core\": \"true; |" package.json'
+mutant "a root vitest config appearing moves it"                moves 'echo "export default {}" > vitest.config.ts'
+mutant "a dependency version in package-lock.json moves it"     moves 'perl -0 -i -pe "s|(\"node_modules/vitest\": \\{\\s*\"version\": \")[^\"]*|\${1}0.0.1|" package-lock.json'
+mutant "an npm install (node_modules/.package-lock.json) moves it" moves 'printf " " >> node_modules/.package-lock.json'
+mutant "a package dropped into node_modules by hand moves it"   moves 'mkdir -p node_modules/@types/stray'
+mutant "another TZ in the environment moves it"                 moves ':' TZ=Pacific/Chatham
+mutant "a symlinked directory gives NO key, so the checks run"  nokey 'ln -s ../packages app/linked'
+
+# And the key's reach, checked against tsc's own list: every file either
+# project reads, outside node_modules, must be one the key read.
+LISTED="$TMP/tsc-listed"; KEYED="$TMP/keyed"
+{ npx tsc --listFilesOnly -p packages/core; npx tsc --listFilesOnly -p app; } 2>/dev/null \
+  | grep -v '/node_modules/' | sed "s|^$(pwd)/||" | sort -u > "$LISTED"
+node tools/gate-key.mjs --files | sort > "$KEYED"
+MISSED=$(comm -23 "$LISTED" "$KEYED")
+if [ -s "$LISTED" ] && [ -z "$MISSED" ]; then
+  ok "every file tsc reads in this repo ($(wc -l < "$LISTED" | tr -d ' ')) is in the key"
+else
+  bad "tsc reads files the key does not:"; printf '%s\n' "$MISSED" | sed 's/^/      /'
+fi
+
 echo
 echo "────────────────────────────────"
 echo "$PASS passed, $FAIL failed"

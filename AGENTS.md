@@ -101,8 +101,9 @@ through lives THERE, not here.
 
 ## Development
 
-- **Tests**: `npm run test` (→ `npm run test:core`) runs `packages/core`'s
-  suite with `--run` (no watch mode). One file or one case:
+- **Tests**: `npm run test` runs `packages/core`'s suite (`test:core`, with
+  `--run`, no watch mode) and then the app's own (`test:app`, the row-drag
+  maths in `app/test`). A tdtp's full pass runs both. One file or one case:
 
   ```
   npm -w @calmind/core run test -- --run test/shopping.test.ts
@@ -123,7 +124,8 @@ through lives THERE, not here.
   are the whole static gate; do not go looking for an eslint config to obey.
 - **`npm run test:deploy`** proves the deploy guards by breaking copies of
   `deploy.sh` and watching each copy stop. It needs no network, no SSH and no
-  `deploy.conf`, so it is always runnable.
+  `deploy.conf`, so it is always runnable (it does need `npm install`: it
+  also proves the gate key, below, against tsc's own file list).
 - **Running it locally**: the three-line recipe is in `ARCHITECTURE.md`
   (export the web build, patch its head, serve it with `e2e-router.php`) —
   plus CalMind's own API, see the traps.
@@ -194,7 +196,15 @@ shape and the reasons:
    AcctMind's hard-learned lesson, not a hypothetical.
 3. **`./deploy.sh --yes-prod`** — the web, and the only thing deployed. Its
    gates live in there; a failed deploy stops everything and is never tagged
-   around.
+   around. Under a tdtp, its typecheck and core suite do not run a second
+   time over the tree the full pass has just checked. `tools/gate-key.mjs`
+   hashes everything tsc and vitest can read, minus the version fields the
+   bump rewrites. The full pass hands that key down when the tree hashed the
+   same before and after its checks. deploy.sh stands down only when the tree
+   in front of it still hashes to it, and says so. Any difference, or no key
+   at all, and it runs them as always. `npm run test:deploy` breaks copies to
+   prove the key moves with every input and the checks stay on in every
+   other case.
 4. **The macOS bundle, BEFORE the tag.** That order is the whole point: a
    broken desktop build leaves the version untagged, so the re-run reuses it,
    exactly as a failed deploy does.

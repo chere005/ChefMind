@@ -7,14 +7,17 @@
 # What a run does, in order:
 #   0. refuse a tree with uncommitted TRACKED changes — the tag must name
 #      exactly what shipped
-#   1. (--full only) typecheck + core suite, before anything is touched
+#   1. (--full only) typecheck + core suite + app suite, before anything is
+#      touched, and the content key of the tree they passed on
 #   2. bump the MINOR version (x.y.0 → x.(y+1).0) in the five files that move
 #      together, and commit the bump — UNLESS the current version is still
 #      untagged, which means a previous run bumped and then failed before
 #      tagging: that version is reused, not skipped past. Re-running a failed
 #      dtp is therefore safe and does not burn a number.
 #   3. ./deploy.sh --yes-prod       (the gates live in there; a failed deploy
-#                                    stops everything — never tag around one)
+#                                    stops everything — never tag around one;
+#                                    its typecheck and core suite stand down
+#                                    only for the very tree step 1 passed)
 #   4. the macOS bundle, from the export deploy.sh just shipped — BEFORE the
 #      tag, so a broken desktop build leaves the version untagged and a re-run
 #      reuses it, exactly as a failed deploy does
@@ -60,6 +63,11 @@ for a in "$@"; do
 done
 # --full is not a platform, so `tdtp` with no other flag still means all three.
 [ "$PICKED" = 1 ] || { WANT_MAC=1; WANT_IOS=1; WANT_ANDROID=1; }
+
+# Set below by the --full pass and by nothing else. Inherited from a shell or a
+# parent lane, it would tell deploy.sh that checks passed which THIS run never
+# ran, so it goes before anything can read it.
+unset CHEF_GATES_PASSED
 
 # ---------------------------------------------------------------- the branch
 # The push below names main explicitly, so a lane run from any other branch
@@ -153,10 +161,29 @@ fi
 
 if [ "$FULL" = 1 ]; then
   echo "==> tdtp: the full run, before anything is touched"
+  # KEYED BEFORE AND AFTER. deploy.sh runs the same typecheck and core suite
+  # again a few seconds from now, on a tree the bump below changes only in
+  # version fields that neither tool reads. tools/gate-key.mjs hashes
+  # everything the two can read, and deploy.sh stands down only for a tree
+  # that still hashes to what passed here. A key taken only AFTER the checks
+  # would describe whatever a mid-run save left, not what was checked, so the
+  # tree has to hash the same at both ends of the run or nothing is handed on.
+  KEY_BEFORE=$(node tools/gate-key.mjs) || KEY_BEFORE=""
   for P in packages/core app; do
     npx tsc --noEmit -p "$P" || { echo "$P typecheck failed — nothing shipped" >&2; exit 1; }
   done
   npm run -s test:core -- --reporter=dot || { echo "core suite failed — nothing shipped" >&2; exit 1; }
+  # The app's own suite — the row-drag maths, the one screen logic with
+  # tests of its own. No lane path ran it until 2026-10-01; `npm test` did.
+  npm run -s test:app -- --reporter=dot || { echo "app suite failed — nothing shipped" >&2; exit 1; }
+  KEY_AFTER=$(node tools/gate-key.mjs) || KEY_AFTER=""
+  if [ -n "$KEY_BEFORE" ] && [ "$KEY_BEFORE" = "$KEY_AFTER" ]; then
+    CHEF_GATES_PASSED="$KEY_BEFORE"
+    export CHEF_GATES_PASSED
+    echo "    passed on tree $(printf '%.12s' "$KEY_BEFORE")… — deploy.sh checks again unless the tree still hashes to that"
+  else
+    echo "    (the tree changed while they ran, or could not be keyed — deploy.sh runs its own checks)"
+  fi
 fi
 
 # ------------------------------------------------------------------ the version
