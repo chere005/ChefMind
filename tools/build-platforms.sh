@@ -196,8 +196,13 @@ if [ "$WANT_MAC" = 1 ]; then
   APPBUNDLE=$(ls -d "$ROOT"/desktop/src-tauri/target/release/bundle/macos/*.app 2>/dev/null | head -1)
   [ -n "$APPBUNDLE" ] || { echo "the build reported success and produced no .app" >&2; exit 1; }
   echo "    $APPBUNDLE"
+  # --no-build: the smoke checks the bundle built just above, the one that is
+  # then installed. It must not compile the shell a second time. AcctMind's
+  # did, inside every lane: 16 s quiet and 74 s under load, and the app it
+  # installed was the smoke's rebuild, not the build the step had checked.
+  # CalMind's smoke.sh takes the flag, and so must any smoke this repo gains.
   if [ -f "$ROOT/desktop/smoke.sh" ]; then
-    ( cd "$ROOT" && sh desktop/smoke.sh ) || { echo "the macOS smoke failed" >&2; exit 1; }
+    ( cd "$ROOT" && sh desktop/smoke.sh --no-build ) || { echo "the macOS smoke failed" >&2; exit 1; }
   fi
   # INSTALL IT. A build sitting in target/release/bundle/macos/ is not a
   # deploy — it is the thing nobody looks at while the app in /Applications
