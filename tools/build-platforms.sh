@@ -62,7 +62,7 @@ BUILD_SCRATCH="$ROOT/$APPDIR/ios"
 
 if [ "$DRY" = 1 ]; then
   [ "$WANT_MAC" = 1 ]     && echo "would: npm -w $DESKTOP_WS run build, then install to /Applications"
-  [ "$WANT_IOS" = 1 ]     && echo "would: prebuild $APPDIR (ios), xcodebuild Release against one of this app's phones, devicectl install to each of them that answers"
+  [ "$WANT_IOS" = 1 ]     && echo "would: prebuild $APPDIR (ios) if it has no workspace, sync app.json's version into it, xcodebuild Release against one of this app's phones, check the built version, devicectl install to each of them that answers"
   [ "$WANT_ANDROID" = 1 ] && echo "would: prebuild $APPDIR (android), gradlew assembleRelease, adb install"
   exit 0
 fi
@@ -118,19 +118,72 @@ ensure_dist() {
 }
 
 # --------------------------------------------------------------- the iOS project
+# The generated project is REUSED once it exists — a prebuild --clean on every
+# build would also wipe ios/derived-platforms and turn each release into a cold
+# build. The price of reuse: the project froze the version at whatever app.json
+# said the day the workspace was first generated. app/ios/ChefMind/Info.plist
+# carries a LITERAL CFBundleShortVersionString, and it said 1.4.0 — the
+# workspace dates from 2026-08-22 — so every phone install since then reported
+# 1.4.0; at 1.25.0 the web, the Mac bundle and the APK all said 1.25.0 (found
+# 2026-10-01). CalMind found the same hole on 2026-08-30 (1.11.0 against
+# 1.17.0); this is its sync_ios_version, copied across.
+#
+# So the version is SYNCED into the generated project on every build:
+# MARKETING_VERSION in the pbxproj, and the app's Info.plist literal, set
+# directly. Both rewrites are verified by reading the value back — a perl that
+# matches nothing exits 0 and reports success (AcctMind's
+# plist-a-version-behind scar). ios/ is gitignored, so this edits generated
+# files only, never the tree the lane is about to tag. And the BUILT bundle is
+# checked again before any phone gets it, below: the sync is the fix, the
+# check is what says the fix reached the artifact.
 IOS_WS=""
+app_version() {
+  _v=$( cd "$ROOT/$APPDIR" && node -p "require('./app.json').expo.version" 2>/dev/null ) || _v=""
+  # digits-and-dots or refuse: node -p prints the STRING "undefined" for a
+  # missing key, which is non-empty and would sync verbatim into the project.
+  case "$_v" in
+    ''|*[!0-9.]*) echo "no usable expo.version in $APPDIR/app.json (got '$_v')" >&2; return 1 ;;
+  esac
+  printf '%s\n' "$_v"
+}
+sync_ios_version() {
+  V=$(app_version) || return 1
+  PBX=$(ls "$ROOT/$APPDIR"/ios/*.xcodeproj/project.pbxproj 2>/dev/null | head -1)
+  [ -n "$PBX" ] || { echo "no project.pbxproj beside the workspace" >&2; return 1; }
+  perl -i -pe "s/MARKETING_VERSION = [^;]*;/MARKETING_VERSION = $V;/g" "$PBX"
+  if grep 'MARKETING_VERSION' "$PBX" | grep -qv " = $V;"; then
+    echo "MARKETING_VERSION did not sync to $V in $PBX" >&2; return 1
+  fi
+  PLIST="$ROOT/$APPDIR/ios/$(basename "$IOS_WS" .xcworkspace)/Info.plist"
+  CUR=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST" 2>/dev/null) || CUR=""
+  case "$CUR" in
+    ''|*MARKETING_VERSION*) : ;;  # absent, or a build-setting reference the pbxproj now feeds
+    "$V") : ;;
+    *) /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $V" "$PLIST" \
+         || { echo "could not set CFBundleShortVersionString in $PLIST" >&2; return 1; }
+       CUR=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST" 2>/dev/null) || CUR=""
+       [ "$CUR" = "$V" ] || { echo "CFBundleShortVersionString did not sync to $V in $PLIST" >&2; return 1; } ;;
+  esac
+  echo "    version: $V (synced into the generated project)"
+}
 prebuild_ios() {
   [ -n "$IOS_WS" ] && return 0
   IOS_WS=$(ls -d "$ROOT/$APPDIR"/ios/*.xcworkspace 2>/dev/null | head -1)
-  [ -n "$IOS_WS" ] && return 0
-  # LANG is not optional: CocoaPods dies in unicode_normalize without a UTF-8
-  # locale, naming nothing useful. And note app/ios/build/ is NOT disposable —
-  # ReactCodegen's generated sources live under it and are written by
-  # pod install, not xcodebuild (AGENTS.md).
-  ( cd "$ROOT/$APPDIR" && LANG=en_US.UTF-8 npx expo prebuild --platform ios --clean ) \
-    || { echo "prebuild failed" >&2; return 1; }
-  IOS_WS=$(ls -d "$ROOT/$APPDIR"/ios/*.xcworkspace 2>/dev/null | head -1)
-  [ -n "$IOS_WS" ] || { echo "prebuild produced no xcworkspace" >&2; return 1; }
+  if [ -z "$IOS_WS" ]; then
+    # LANG is not optional: CocoaPods dies in unicode_normalize without a UTF-8
+    # locale, naming nothing useful. And note app/ios/build/ is NOT disposable —
+    # ReactCodegen's generated sources live under it and are written by
+    # pod install, not xcodebuild (AGENTS.md).
+    ( cd "$ROOT/$APPDIR" && LANG=en_US.UTF-8 npx expo prebuild --platform ios --clean ) \
+      || { echo "prebuild failed" >&2; return 1; }
+    IOS_WS=$(ls -d "$ROOT/$APPDIR"/ios/*.xcworkspace 2>/dev/null | head -1)
+    [ -n "$IOS_WS" ] || { echo "prebuild produced no xcworkspace" >&2; return 1; }
+  fi
+  # NOT an early return on an existing workspace, which is what this function
+  # did until 2026-10-01 — and that is the path every release takes, so a sync
+  # placed after it would never have run. Even a fresh prebuild goes through
+  # the sync: the verify is the point.
+  sync_ios_version || return 1
 }
 
 # ------------------------------------------------------------------- macOS
@@ -355,6 +408,22 @@ PY
 
   BUNDLE="$DERIVED/Build/Products/Release-iphoneos/$SCHEME.app"
   [ -d "$BUNDLE" ] || { echo "the build succeeded and produced no $SCHEME.app" >&2; exit 1; }
+
+  # THE VERSION THE PHONES WILL REPORT, read off the BUILT bundle — not the
+  # project the sync above wrote, because what reaches the phone is this
+  # Info.plist. A bundle that does not say app.json's version is not
+  # installed anywhere: the phones said 1.4.0 for a month while every other
+  # platform moved on, and nothing noticed. The failure is the step's, so the
+  # lane owes --ios and ends non-zero rather than putting a wrong number on a
+  # phone.
+  WANT_V=$(app_version) || exit 1
+  GOT_V=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$BUNDLE/Info.plist" 2>/dev/null) || GOT_V=""
+  if [ "$GOT_V" != "$WANT_V" ]; then
+    echo "the built $SCHEME.app says version '${GOT_V:-<none>}', and app.json says $WANT_V — not installing it on any phone" >&2
+    echo "  the sync into app/ios did not reach the build; look at $BUNDLE/Info.plist" >&2
+    exit 1
+  fi
+  echo "    built: $SCHEME.app $GOT_V"
 
   # INSTALL IT TO EVERY PHONE THAT ANSWERED. Nothing here has to make room for
   # anything: Apple's free-tier cap of 3 apps per device does not apply, because

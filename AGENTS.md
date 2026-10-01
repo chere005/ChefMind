@@ -150,6 +150,15 @@ through lives THERE, not here.
   Patricia's, since 2026-09-21. A phone that refuses is warned about and
   skipped; the step fails only when none of them took it.
 
+  The version a phone reports is app.json's, and the step makes sure of it.
+  The generated `app/ios` is reused across releases, and its Info.plist
+  carried a literal 1.4.0 from 2026-08-22, so every phone install reported
+  1.4.0 while the other platforms moved on (found 2026-10-01). So every build
+  now syncs `expo.version` into the pbxproj's `MARKETING_VERSION` and that
+  plist and reads both back. It also reads the BUILT bundle's
+  `CFBundleShortVersionString` before installing anything, and refuses every
+  phone if it is not app.json's version.
+
   There is no per-phone app cap any more. Apple's free-tier limit of 3 apps
   on a device does not apply: the team (2LGYTL3FSJ) is PAID, its profile
   carrying `TimeToLive 365` where a personal team's carries 7. Sean,
