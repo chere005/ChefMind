@@ -312,6 +312,9 @@ no longer rations them, and it was already sitting on Sean's own phone at
   machine while the `.app` bundles fine; and `msi`/`nsis` build in CI —
   `.github/workflows/desktop-windows.yml`, dispatched after a dtp's push —
   since Tauri does not cross-compile and Windows needs its own toolchain.
+  `bundle.icon` names only `icon.icns`, `icon.ico` and `icon.png`; a re-run of
+  `npx tauri icon` also writes `android/`, `ios/`, `Square*Logo.png` and
+  `StoreLogo.png` into `icons/`, which nothing here uses — delete them after.
 - **The desktop shell's `location.origin` is `tauri://localhost`.** Deriving
   the API from it aims every request at a path the asset protocol answers with
   index.html, which reads back as "server error (500)" on the login card.
