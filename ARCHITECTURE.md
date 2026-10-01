@@ -89,12 +89,15 @@ keep".
 
 | Gone | Because |
 |---|---|
-| `Calendar`, `Habits` | not this app |
-| `Requests`, `Request`, the account badge | the public request page is CalMind's |
-| `QuickTick`, `watch.ts`, the watch/widget targets | no watch, no widgets |
-| `subs.ts` | calendar subscriptions belong to the calendar |
+| `Calendar`, `Habits`, `core/habit.ts`, `core/layout.ts` | not this app |
+| `BalancedRow`, `CalendarPick`, `HabitEditor`, `HabitSectionManager`, `SectionPick`, `tickgrace` | the components of the Calendar, Habits and Reminders screens, which went with them |
+| `Requests`, `Request`, the account badge, `core/meetreq.ts` | the public request page is CalMind's |
+| `QuickTick`, `watch.ts` and `core/watch.ts`, the watch/widget targets | no watch, no widgets |
+| `subs.ts`, `core/calsub.ts`, `core/ical.ts`, `core/rrule.ts` | calendar subscriptions belong to the calendar |
 | the Event card on Add | an event is a calendar thing |
 | `Reminders`, the Reminder card, and the general reminders FOLDER | Sean, 2026-08-21: "remove reminders from ChefMind" — a general list is CalMind's job. The screen went then; the seeded folder named *Reminders* survived until 2026-08-22 ("that should have been removed completely") because the shape pass needed somewhere to file a stray reminder. The shopping list is that somewhere now, and an account that already grew the folder has it folded in — rows first, then the folder. The `reminder` RECORD stays: the shopping rows are reminder records, and Search finds them under **Shopping** |
+| `core/markdown.ts` | it exports a Reminders view as Markdown, and there is no Reminders view |
+| `core/chefdate.ts` | the dates CalMind keeps about ChefMind recipes, which ChefMind never sees |
 | the repeat pill on Add | what is left there makes a recipe, and a recipe does not recur |
 | the time field on Add | a time belongs to a reminder |
 | core's calendar and habit STARTERS | records that would sync forever and never be drawn |

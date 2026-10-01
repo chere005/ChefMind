@@ -196,17 +196,6 @@ export function FolderPick({ app, open: openProp, onClose, button = true }: {
 }
 
 const s = themed(() => StyleSheet.create({
-  dotBtn: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    borderWidth: 1,
-    borderColor: T.line,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: T.surface2,
-  },
-  allRing: { width: 12, height: 12, borderRadius: 6, borderWidth: 2, borderColor: T.dim },
   backdrop: { flex: 1, backgroundColor: '#0009', alignItems: 'center', justifyContent: 'center', padding: 24 },
   menu: {
     width: '100%',
@@ -221,7 +210,6 @@ const s = themed(() => StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 11 },
   rowMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
   dot: { width: 12, height: 12, borderRadius: 6 },
-  allDot: { width: 12, height: 12, borderRadius: 6, borderWidth: 2, borderColor: T.dim },
   rowText: { color: T.text, fontSize: 15, flex: 1 },
   rowActive: { color: T.accent, fontWeight: '700' },
   box: { color: T.muted, fontSize: 16 },

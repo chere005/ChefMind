@@ -137,8 +137,9 @@ export type HabitSection = { name: string; color: string; ord: string };
 /**
  * `frequency` is optional because every habit written before it existed has
  * none, and reads as 'always' — which is exactly what they already were. See
- * habit.ts for what each value means; the two questions it answers ("is it
- * listed today" and "does it count today") are deliberately not the same.
+ * CalMind's core/habit.ts for what each value means; the two questions it
+ * answers ("is it listed today" and "does it count today") are deliberately
+ * not the same.
  */
 export type Habit = { name: string; sectionId: string; ord: string; frequency?: 'always' | 'weekdays' | 'never' };
 /** One tick of one habit on one day. Deterministic id (tickId) makes the same
@@ -188,8 +189,8 @@ export type Prefs = {
    *
    * It is here, in CALMIND's prefs, rather than in the recipe, because the
    * recipes are ChefMind's records and CalMind reads them and nothing else.
-   * See chefdate.ts for the whole argument; the short version is that "only
-   * known to CalMind" is the requirement, not a side effect.
+   * See CalMind's core/chefdate.ts for the whole argument; the short version
+   * is that "only known to CalMind" is the requirement, not a side effect.
    */
   chefDates?: Record<string, string>;
 };
@@ -216,8 +217,8 @@ export type MeetReq = {
  *  link first, i just want read only access to other calendar system"). The
  *  record is only the pointer — url, name, colour, its place in the picker.
  *  The EVENTS are never records: the server proxies the ICS (calsub_fetch)
- *  and core's subOccurrences reads it fresh on the client, so nothing from
- *  someone else's calendar can ever sync back out. */
+ *  and CalMind's core subOccurrences reads it fresh on the client, so
+ *  nothing from someone else's calendar can ever sync back out. */
 export type CalSub = { url: string; name: string; color: string; ord: string };
 
 export type RecType =
