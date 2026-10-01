@@ -67,6 +67,26 @@ if [ "$DRY" = 1 ]; then
   exit 0
 fi
 
+# ------------------------------------------------------------ one at a time
+# Every platform block below runs under the machine-wide heavy-build lock,
+# tools/heavy-lock.sh — canon's bytes (CoreMind/canon/tools/heavy-lock.sh, an
+# exact row), so fix it THERE, never here. "One heavy build at a time" was a
+# rule this file's own comments and every AGENTS.md stated and nothing kept:
+# the lane runs its blocks one after another, but another session's lane, or
+# CoreMind's fallback, or a hand-run xcodebuild in a second terminal could
+# not see them. On 2026-09-30 one session's gradle ran beside another's
+# xcodebuild and an AcctMind lane took 1574 s instead of 246. Now a block that
+# finds any other build running — this repo's or another's, this session's or
+# not — waits for it, saying whose it is, instead of running beside it.
+#
+# Taken around each BLOCK, because a block is the unit the lane runs on its
+# own (--mac before the tag, --ios and --android after the push), and the
+# installs inside each one are part of it: two lanes installing onto the same
+# phone at once is the same contention one level down. Let go explicitly at
+# each block's end; every `exit 1` inside a block lets go through the
+# helper's EXIT trap, and a kill -9 through the next waiter's takeover.
+. "$ROOT/tools/heavy-lock.sh"
+
 # The export the desktop shell stages: a CLEAN one, plus the head patch.
 #
 # THE PATCH IS NOT OPTIONAL, and this is the bug that was here. CoreMind's mac
@@ -116,6 +136,7 @@ prebuild_ios() {
 # ------------------------------------------------------------------- macOS
 if [ "$WANT_MAC" = 1 ]; then
   echo "==> macOS desktop bundle"
+  heavy_lock "macOS" || exit 1
   ensure_dist || exit 1
   ( cd "$ROOT" && npm -w "$DESKTOP_WS" run build ) \
     || { echo "the macOS bundle failed to build" >&2; exit 1; }
@@ -192,11 +213,13 @@ if [ "$WANT_MAC" = 1 ]; then
       echo "warning: $APPNAME was running before this release and would not reopen" >&2
     fi
   fi
+  heavy_unlock
 fi
 
 # --------------------------------------------------------------------- iOS
 if [ "$WANT_IOS" = 1 ]; then
   echo "==> iOS"
+  heavy_lock "iOS" || exit 1
 
   # THE PHONES THIS APP BELONGS ON. A release is not "install it to the phone",
   # and it is not "install it to whatever is plugged in" either: every app in
@@ -375,11 +398,13 @@ PY
   [ "$OK" -gt 0 ] || { echo "not one phone took $SCHEME.app" >&2; exit 1; }
   # No watch branch: watchOS is not a target here — watch.ts and the
   # watch/widget targets went with Calendar and Habits (ARCHITECTURE.md).
+  heavy_unlock
 fi
 
 # ----------------------------------------------------------------- Android
 if [ "$WANT_ANDROID" = 1 ]; then
   echo "==> Android"
+  heavy_lock "Android" || exit 1
   export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
   export ANDROID_SDK_ROOT="$ANDROID_HOME"
   export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
@@ -453,4 +478,5 @@ if [ "$WANT_ANDROID" = 1 ]; then
   done
   [ "$RUNNING" = 1 ] || { echo "installed and launched but never showed up running" >&2; exit 1; }
   echo "    installed and running: $PKG on $SERIAL"
+  heavy_unlock
 fi

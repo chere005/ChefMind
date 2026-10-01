@@ -279,7 +279,9 @@ fi
 # are different questions and were run together until 2026-08-23.
 #
 # One at a time, never in parallel: two heavy build/device processes at once
-# has caused real failures on this machine twice (AGENTS.md).
+# has caused real failures on this machine twice (AGENTS.md). These two calls
+# are sequential by construction; what keeps ANOTHER session's build off them
+# is the heavy-build lock each block of build-platforms.sh takes.
 DEVICE_FAILED=""
 if [ "$WANT_IOS" = 1 ]; then
   sh tools/build-platforms.sh --ios || DEVICE_FAILED="$DEVICE_FAILED --ios"
