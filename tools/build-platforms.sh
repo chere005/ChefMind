@@ -324,7 +324,7 @@ PY
   # every target in the scheme.
   if ! xcodebuild -workspace "$IOS_WS" -scheme "$SCHEME" -configuration Release \
       -destination "platform=iOS,id=$BUILD_UDID" -derivedDataPath "$DERIVED" \
-      -allowProvisioningUpdates build >"$LOG" 2>&1; then
+      -allowProvisioningUpdates -allowProvisioningDeviceRegistration build >"$LOG" 2>&1; then
     echo "the iOS build failed — last lines:" >&2
     tail -25 "$LOG" >&2; echo "full log: $LOG" >&2; exit 1
   fi
