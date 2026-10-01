@@ -73,11 +73,22 @@ fi
 # exact row), so fix it THERE, never here. "One heavy build at a time" was a
 # rule this file's own comments and every AGENTS.md stated and nothing kept:
 # the lane runs its blocks one after another, but another session's lane, or
-# CoreMind's fallback, or a hand-run xcodebuild in a second terminal could
-# not see them. On 2026-09-30 one session's gradle ran beside another's
-# xcodebuild and an AcctMind lane took 1574 s instead of 246. Now a block that
-# finds any other build running — this repo's or another's, this session's or
-# not — waits for it, saying whose it is, instead of running beside it.
+# CoreMind's fallback, could not see them. On 2026-09-30 one session's gradle
+# ran beside another's xcodebuild and an AcctMind lane took 1574 s instead of
+# 246. Now a block that finds the lock HELD by another build — this repo's or
+# another's, this session's or not — waits for it, saying whose it is,
+# instead of running beside it.
+#
+# It sees ONLY builds that take the lock — the scripts that source canon's
+# helper: as of 2026-10-01 the platform blocks of AcctMind, CalMind, ChefMind
+# and MyCalMind, MyCalMind's deploy-device.sh, AcctMind's desktop smoke and
+# CoreMind's fallback bin/build-platforms.sh. It looks for no xcodebuild,
+# gradle or cargo process, so a block here still starts beside, unseen:
+# WriteMind's builds and tests (and WriteMindCross's), a TestMindSuite fork's
+# lane (qdtp, after every feature), and any build run by hand — this repo's
+# `npm run desktop` or app/'s `npm run ios`/`android`, an xcodebuild in a
+# terminal, or a build started from Xcode's own window. For those, "one at a
+# time" is still a rule to remember, not something this lock keeps.
 #
 # Taken around each BLOCK, because a block is the unit the lane runs on its
 # own (--mac before the tag, --ios and --android after the push), and the

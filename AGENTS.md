@@ -224,13 +224,22 @@ shape and the reasons:
    disambiguates by name). Same rule as CoreMind's `bin/dtp.sh`: "it all
    worked" cannot be read off the exit status.
 
-**One heavy build at a time is kept by the machine, not by memory.** Every
-platform block in `tools/build-platforms.sh` (macOS, iOS, Android, installs
-included) runs under `tools/heavy-lock.sh`, the suite's machine-wide lock at
-`/tmp/mind-heavy-<uid>.lock`. A block that finds another session's xcodebuild,
-gradle or cargo running waits for it, naming whose it is every 30 s, and gives
-up after 30 minutes. The helper is canon's bytes (an exact row in
-`CoreMind/consumers/ChefMind.tsv`): fix it in CoreMind, never here.
+**One heavy build at a time is kept by a lock, among the builds that take
+it.** Every platform block in `tools/build-platforms.sh` (macOS, iOS, Android,
+installs included) runs under `tools/heavy-lock.sh`, the suite's machine-wide
+lock at `/tmp/mind-heavy-<uid>.lock`. A block that finds the lock held by
+another build waits for it, naming whose it is every 30 s, and gives up after
+30 minutes. **It sees only builds that take it**: as of 2026-10-01, the
+AcctMind, CalMind, ChefMind and MyCalMind platform blocks, MyCalMind's
+`tools/deploy-device.sh`, AcctMind's desktop smoke and CoreMind's fallback
+`bin/build-platforms.sh`. It looks for no xcodebuild, gradle or cargo process,
+so a block still starts beside WriteMind's builds and tests (and
+WriteMindCross's), a TestMindSuite fork's lane (qdtp), and any build run by
+hand: this repo's `npm run desktop` or `app/`'s `npm run ios`/`android`, a
+terminal xcodebuild, or a build started from Xcode's own window. For those,
+one at a time is still a rule to remember. The helper is canon's bytes (an
+exact row in `CoreMind/consumers/ChefMind.tsv`): fix it in CoreMind, never
+here.
 
 **Which platforms**: naming one selects only it, naming none means all of
 them, and `--web` is how you say "the release and no platform builds". That is
