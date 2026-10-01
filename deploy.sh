@@ -208,6 +208,55 @@ echo "    the bundle carries space='$SPACE'"
 . ./deploy.conf
 [ -n "$SSH_DEST" ] || { echo "SSH_DEST not set in deploy.conf" >&2; exit 1; }
 
+# ONE SSH CONNECTION FOR THE WHOLE UPLOAD — CalMind's server/deploy.sh shape,
+# same names. The upload is two rsyncs, and each used to open its own
+# connection to NFSN, a couple of seconds of handshake apiece. Now the
+# preflight below opens a master and every later call rides it
+# (ControlPersist keeps it up between calls; mux_close ends it with the run).
+# Same commands, same files, same order: only how the session is opened
+# changed, and the served-page proof is HTTPS and never touches it.
+#
+# The socket sits in a private mktemp dir (0700: nobody else on this machine
+# rides the connection) and its path stays short, because macOS refuses a
+# socket path over 104 bytes and ssh adds 17 of its own while it sets the
+# master up. A $TMPDIR long or odd enough to break that — a sandboxed
+# session's can be — gets no multiplexing rather than a broken one: RSH is
+# then plain ssh, which is exactly the old deploy.
+#
+# Every call still starts its line with `ssh ` or `rsync `, the spelling
+# tools/check-deploy-guards.sh rewrites to echo in its tampered copies. Keep
+# it that way: a call spelled any other way would reach the server from a
+# guard check.
+SSHMUX=""
+MUX_TMP=${TMPDIR:-/tmp}
+MUX_DIR=$(mktemp -d "${MUX_TMP%/}/chefmind-ssh.XXXXXX" 2>/dev/null) || MUX_DIR=""
+case "$MUX_DIR" in
+  ''|*[!A-Za-z0-9._/-]*) ;;
+  *)
+    if [ ${#MUX_DIR} -le 80 ]; then
+      SSHMUX="-o ControlMaster=auto -o ControlPath=$MUX_DIR/m -o ControlPersist=120"
+    fi ;;
+esac
+RSH="ssh${SSHMUX:+ $SSHMUX}"
+mux_close() {
+  if [ -n "$SSHMUX" ]; then
+    ssh -O exit $SSHMUX "$SSH_DEST" >/dev/null 2>&1 || true
+  fi
+  if [ -n "$MUX_DIR" ]; then rm -rf "$MUX_DIR"; fi
+}
+# However this run ends. On INT or TERM the master is closed and then the
+# signal is raised again, so whoever ran this still sees an interrupt rather
+# than an ordinary failure.
+on_signal() {
+  mux_close
+  trap - EXIT "$1"
+  kill -s "$1" $$
+  exit 1
+}
+trap mux_close EXIT
+trap 'on_signal INT' INT
+trap 'on_signal TERM' TERM
+
 echo "==> icons"
 # iOS reads apple-touch-icon, which expo does not emit; the manifest names the
 # other two.
@@ -219,14 +268,39 @@ perl -i -pe "s|</head>|<link rel=\"apple-touch-icon\" href=\"/ChefMind/apple-tou
 ICOV=$(shasum app/dist/favicon.ico | cut -c1-8)
 perl -i -pe "s|favicon\.ico(\?v=[0-9a-f]*)?|favicon.ico?v=$ICOV|" app/dist/index.html
 
+# PREFLIGHT, before anything is written: open the shared connection and use
+# it twice. A host that will not run a second session over one connection
+# (sshd's MaxSessions) is found HERE, not between the two rsyncs, with new
+# bundles live behind an old .htaccess. Where CalMind stops on that, this
+# falls back to a connection per call, which is the deploy as it was before
+# the master existed: the master is a saving, and it must never be the reason
+# a deploy that worked yesterday cannot run today. If plain ssh fails too, the
+# host is unreachable and nothing has been uploaded. Read-only, so a dry run
+# makes it too; its rsyncs connect anyway.
+if [ -n "$SSHMUX" ]; then
+  echo "==> one ssh connection for the upload"
+  MUX_OK=1
+  ssh $SSHMUX "$SSH_DEST" true || MUX_OK=0
+  if [ "$MUX_OK" = 1 ]; then
+    ssh $SSHMUX "$SSH_DEST" true || MUX_OK=0
+  fi
+  if [ "$MUX_OK" = 0 ]; then
+    mux_close
+    SSHMUX=""; MUX_DIR=""; RSH="ssh"
+    echo "   the shared connection failed — trying one connection per call, as before" >&2
+    ssh "$SSH_DEST" true \
+      || { echo "cannot reach $SSH_DEST over ssh — nothing uploaded" >&2; exit 1; }
+  fi
+fi
+
 echo "==> web client -> $WEB_DEST/"
 # No --delete, ever. .sources.json is this machine's record of what the export
 # was built from and has no business being served.
-rsync -avL $DRY --exclude '.sources.json' app/dist/ "$SSH_DEST:$WEB_DEST/"
+rsync -avL $DRY -e "$RSH" --exclude '.sources.json' app/dist/ "$SSH_DEST:$WEB_DEST/"
 # index.html must revalidate; the hashed bundles cache forever. CalMind's
 # htaccess, because the rule is about the shape of the files and both apps
 # have the same shape.
-rsync -avL $DRY tools/web.htaccess "$SSH_DEST:$WEB_DEST/.htaccess"
+rsync -avL $DRY -e "$RSH" tools/web.htaccess "$SSH_DEST:$WEB_DEST/.htaccess"
 
 if [ -z "$DRY" ]; then
   echo "==> proving the served page"
