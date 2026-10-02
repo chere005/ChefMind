@@ -24,8 +24,8 @@
  * reason given.
  */
 import { useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { AISLES, byRecOrd, duplicateItem, ingredientAisle, ingredientParts, newId, ordBetween, type Aisle, type Rec } from '@calmind/core';
+import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { AISLES, byRecOrd, duplicateItem, ingredientAisle, ingredientParts, newId, ordBetween, pantryItemsFromPages, type Aisle, type Rec } from '@calmind/core';
 import { useStore } from '../store';
 import { themed, T } from '../theme';
 import { TopBar } from '../chrome';
@@ -34,7 +34,8 @@ import { useSwipeLeft } from '../components/swiperow';
 import { EditExit } from '../components/EditExit';
 import { PickBar } from '../components/PickBar';
 import { useToast } from '../components/Toast';
-import { CircleBtn, ConfirmDelete, Field, Scroll, WebHitSlop } from '../ui';
+import { OCR_UNSUPPORTED, ocrImages, ocrSupported } from '../components/ocr';
+import { CircleBtn, ConfirmDelete, Field, Pill, Scroll, WebHitSlop } from '../ui';
 
 type Row = Rec<'reminder'>;
 
@@ -111,6 +112,17 @@ function FlagList({ kind }: { kind: Kind }) {
    * way, and a re-render is neither needed nor wanted in between.
    */
   const justHeld = useRef(false);
+  /**
+   * The pantry's 📷 — Sean, 2026-10-01: "add a button to do ocr to look at a
+   * receipt or list of ingredients to add them to the pantry". The same OCR
+   * the recipe importer reads cards with; core's `pantryItemsFromPages` turns
+   * the pages into names. What it finds is a PROPOSAL, shown with every row
+   * ticked, because a receipt always carries something that is not food —
+   * the store's name, a bag charge — and unticking it is cheaper than
+   * deleting it from the pantry afterwards.
+   */
+  const [scanBusy, setScanBusy] = useState('');
+  const [scanned, setScanned] = useState<{ name: string; on: boolean }[] | null>(null);
 
   const { folder, section, rows, groups } = useMemo(() => {
     const f = recs.find(
@@ -183,6 +195,54 @@ function FlagList({ kind }: { kind: Kind }) {
         },
       }),
     );
+  };
+
+  const say = (msg: string) => {
+    setScanBusy(msg);
+    setTimeout(() => setScanBusy((cur) => (cur === msg ? '' : cur)), 5000);
+  };
+
+  const scanPhotos = async () => {
+    // Asked before the picker opens, as the recipe importer does.
+    if (!ocrSupported()) { say(OCR_UNSUPPORTED); return; }
+    try {
+      const ImagePicker = await import('expo-image-picker');
+      const picked = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], allowsMultipleSelection: true, quality: 0.9 });
+      if (picked.canceled || picked.assets.length === 0) return;
+      setScanBusy(`Reading 0/${picked.assets.length}…`);
+      const pages = await ocrImages(picked.assets.map((a) => a.uri), (d, t) => setScanBusy(`Reading ${d}/${t}…`))
+        .catch((err: unknown) => {
+          // A partial failure still carries the pages that DID read.
+          const carried = (err as { pages?: string[] })?.pages;
+          if (carried?.length) return carried;
+          throw err;
+        });
+      const found = pantryItemsFromPages(pages, rows.map((r) => r.payload.text));
+      setScanBusy('');
+      if (found.length === 0) { say('Nothing new found in that photo — try a straighter, brighter shot.'); return; }
+      setScanned(found.map((name) => ({ name, on: true })));
+    } catch (err) {
+      say(err instanceof Error ? err.message : 'That photo could not be read.');
+    }
+  };
+
+  const addScanned = () => {
+    const names = (scanned ?? []).filter((x) => x.on).map((x) => x.name);
+    setScanned(null);
+    if (names.length === 0 || !folder || !section) return;
+    mutate((e) => {
+      let prev = rows[rows.length - 1]?.payload.ord ?? null;
+      for (const text of names) {
+        // Walked forward, one key per row — ordBetween(prev, null) asked the
+        // same question twice answers it the same way twice.
+        prev = ordBetween(prev, null);
+        e.put({
+          id: newId(), type: 'reminder', updated: 0,
+          payload: { text, due: null, time: null, done: false, repeat: null, folderId: folder.id, sectionId: section.id, indent: 0, ord: prev },
+        });
+      }
+    });
+    toast(names.length === 1 ? '1 added to the pantry.' : `${names.length} added to the pantry.`);
   };
 
   const commitEdit = (r: Row) => {
@@ -262,8 +322,12 @@ function FlagList({ kind }: { kind: Kind }) {
               onSubmitEditing={add}
               style={s.addField}
             />
+            {kind === 'pantry' && (
+              <CircleBtn testID="pantry-scan" glyph="📷" label="Read a receipt or list" size={26} onPress={() => void scanPhotos()} />
+            )}
             <CircleBtn testID={`${copy.prefix}-add-go`} glyph="+" label="Add" color={T.accent} size={26} onPress={add} />
           </View>
+          {scanBusy !== '' && <Text testID="pantry-scan-busy" style={s.busy}>{scanBusy}</Text>}
 
           {rows.length === 0 && <Text style={s.empty}>{copy.empty}</Text>}
 
@@ -391,6 +455,44 @@ function FlagList({ kind }: { kind: Kind }) {
           only thing that said how many were picked, and it appeared only once
           something was — so the count you wanted before choosing was the one
           thing you could not see, and All was behind a mode. */}
+      {scanned && (
+        <Modal transparent animationType="fade" onRequestClose={() => setScanned(null)}>
+          <Pressable style={s.backdrop} onPress={() => setScanned(null)}>
+            <Pressable style={s.card} onPress={() => {}}>
+              <Text style={s.h2}>Add to the pantry</Text>
+              <Text style={s.cardNote}>Untick anything that is not on the shelf.</Text>
+              <Scroll style={s.cardList}>
+                {scanned.map((x, i) => (
+                  <Pressable
+                    key={`${i}-${x.name}`}
+                    testID="pantry-scan-row"
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: x.on }}
+                    accessibilityLabel={x.name}
+                    onPress={() => setScanned((cur) => cur && cur.map((y, j) => (j === i ? { ...y, on: !y.on } : y)))}
+                    style={s.scanRow}
+                  >
+                    <View style={[s.box, s.boxCircle, x.on && s.boxOn]}>
+                      {x.on && <Text style={s.boxTick}>✓</Text>}
+                    </View>
+                    <Text style={[s.rowText, !x.on && s.scanOff]}>{x.name}</Text>
+                  </Pressable>
+                ))}
+              </Scroll>
+              <View style={s.cardBar}>
+                <Pill testID="pantry-scan-cancel" label="Cancel" onPress={() => setScanned(null)} />
+                <Pill
+                  testID="pantry-scan-add"
+                  primary
+                  label={`Add ${scanned.filter((x) => x.on).length}`}
+                  disabled={!scanned.some((x) => x.on)}
+                  onPress={addScanned}
+                />
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
       {(
         <PickBar
           prefix={copy.prefix}
@@ -443,4 +545,13 @@ const s = themed(() => StyleSheet.create({
   editField: { flex: 1 },
   dropLine: { height: 2, backgroundColor: T.accent, borderRadius: 1, marginVertical: 2 },
   editBackdropFill: { flexGrow: 1, minHeight: 160 },
+  busy: { color: T.dim, fontSize: 14, marginBottom: 8 },
+  backdrop: { flex: 1, backgroundColor: '#000a', alignItems: 'center', justifyContent: 'center', padding: 16 },
+  card: { width: '100%', maxWidth: 440, maxHeight: '85%', backgroundColor: T.surface, borderWidth: 1, borderColor: T.line, borderRadius: 16, padding: 16, gap: 8 },
+  h2: { color: T.text, fontSize: 18, fontWeight: '700' },
+  cardNote: { color: T.dim, fontSize: 13 },
+  cardList: { flexGrow: 0 },
+  scanRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 7 },
+  scanOff: { color: T.muted, textDecorationLine: 'line-through' },
+  cardBar: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 4 },
 }));
