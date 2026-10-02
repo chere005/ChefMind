@@ -29,7 +29,7 @@
  * adding to shopping cart") is applied here rather than at the call site, so
  * every route into the list obeys it and there is one place to look.
  */
-import { ingredientParts, isSubheader, countWord, qtyText, qtyValue, singularOf } from './recipe';
+import { ingredientParts, isSubheader, countWord, precleanOcrLine, qtyText, qtyValue, scrubLine, singularOf } from './recipe';
 import { amountText, formatBase, toBase, unitDimension, type Dimension } from './units';
 import { ingredientAisle, type Aisle } from './grocery';
 
@@ -475,4 +475,108 @@ function render(e: Entry, loose = false): string {
   // onion' kept the shorter name and read '3 onion' the first time this ran.
   // The strict pass never rewrites a name and must not start here.
   return `${amount} ${loose ? countName(e.name, e.qty) : e.name}`.trim();
+}
+
+/**
+ * WHAT A PHOTO SAYS IS ON HAND — Sean, 2026-10-01: "in chefmind pantry add a
+ * button to do ocr to look at a receipt or list of ingredients to add them to
+ * the pantry".
+ *
+ * Two kinds of page, read by one pass, because a line on either is the same
+ * question — is this a thing on the shelf, and what is it called?
+ *
+ *   - A RECEIPT: 'ORG BANANAS 1.23 LB @ 0.59/LB 0.73 F'. Prices, weights,
+ *     tax flags and SKUs come off; the till's own chatter (totals, tenders,
+ *     the store's address, the date) is dropped whole.
+ *   - A LIST: '2 cups flour', '- eggs', '[ ] butter, softened'. The bullet,
+ *     the measure and the cook's note come off, so the pantry holds 'flour'
+ *     — the name is what the pantry matches on, never the amount.
+ *
+ * The result is a PROPOSAL: the screen shows it and the cook unticks the
+ * till's junk before anything is written. So this errs towards keeping a
+ * line it is unsure of — an extra row costs a tap, a lost one costs a retype.
+ *
+ * `have` is the pantry as it stands. Anything already on it (by the pantry's
+ * own reading, `staple(pantryKey(…))`) is left out, and so is a repeat within
+ * the photo — a receipt that rang up milk twice still means one row.
+ */
+export function pantryItemsFromPages(pages: readonly string[], have: readonly string[] = []): string[] {
+  const seen = new Set(have.map((p) => staple(pantryKey(ingredientParts(p).name || p))).filter(Boolean));
+  const out: string[] = [];
+  for (const page of pages) {
+    for (const raw of page.split(/\r?\n/)) {
+      for (const name of scannedNames(raw)) {
+        const key = staple(pantryKey(name));
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push(name);
+      }
+    }
+  }
+  return out;
+}
+
+/** The till's own words: a line carrying one of these is never a product. */
+const RECEIPT_CHROME = /\b(?:sub\s*-?\s*total|total|tax(?:able)?|balance|change|cash|tender(?:ed)?|visa|mastercard|amex|discover|debit|credit|card|payment|approved|approval|auth(?:orization)?|acct|account|trans(?:action)?|terminal|cashier|register|receipt|thank(?:s| you)?|welcome|survey|savings|saved|coupon|discount|member(?:ship)?|rewards?|points|loyalty|items?\s+sold|item\s+count|tel|phone|manager|store\s*#?|st\s*#|op\s*#|tr\s*#|ref\s*#|invoice|order\s*#|signature|customer|copy|refund|return(?:s)?\s+policy|market|supermarket)\b/i;
+
+/** A heading over the list rather than a thing on it. */
+const LIST_HEADING = /^(?:ingredients?|shopping(?:\s+list)?|grocer(?:y|ies)(?:\s+list)?|pantry|list|to\s+buy|need|groceries|directions|method|instructions|notes?)\s*:?$/i;
+
+/** Receipt shorthand that says nothing about which thing it is. */
+const RECEIPT_PREFIX = /^(?:org|organic)\s+/i;
+
+/**
+ * One OCR line into the names it carries — none for chatter, usually one,
+ * several for a comma list ('flour, sugar, eggs').
+ */
+function scannedNames(raw: string): string[] {
+  let l = raw.replace(/\s+/g, ' ').trim();
+  if (l === '') return [];
+  if (/https?:\/\/|www\.|@\S+\.\w|\.(?:com|net|org)\b/i.test(l)) return [];
+  if (RECEIPT_CHROME.test(l)) return [];
+  // The store's address: a street number and a street word, or a state and
+  // a ZIP. Asked before the SKU strip below, which would take the number.
+  if (/^\d+\s.*\b(?:st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|ln|lane|hwy|highway|pkwy|parkway|way|suite|ste)\b\.?/i.test(l)) return [];
+  if (/\b[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/.test(l)) return [];
+  // Dates, times and phone numbers: the receipt's header and footer.
+  if (/\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b|\b\d{1,2}:\d{2}\b|\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}/.test(l)) return [];
+  l = l
+    // A weighed or multi-bought line: everything from the '@' on is the sum,
+    // and the number before it is how much — '1.23 LB @ 0.59/LB', '2 @ 3.00'.
+    .replace(/\s*(?:\d+(?:[.,]\d+)?\s*(?:lbs?|kg|oz|ea)?\s*)?@.*$/i, '')
+    // Trailing prices with their tax flags, as often as they stack:
+    // '4.99 F', '$4.99', '1.00-', '4.99 TF', '2/5.00'.
+    .replace(/(?:\s+(?:\d+\s*\/\s*)?-?\$?\s?\d+[.,]\d{2}-?(?:\s+[A-Z*]{1,2})?)+\s*$/, '')
+    // An SKU or PLU at either end: four or more digits run together.
+    .replace(/^\d{4,}\s+/, '')
+    .replace(/\s+\d{4,}$/, '')
+    // A list's own furniture: bullets, checkboxes, numbering.
+    .replace(/^(?:[-*•·◦▪●]\s+|\[\s*[xX✓]?\s*\]\s*|[☐☑☒□■]\s*|\d{1,2}[.)]\s+)/, '');
+  l = scrubLine(precleanOcrLine(l))
+    .replace(/^(?:ingredients?|shopping list|grocery list|groceries)\s*:\s*/i, '');
+  if (LIST_HEADING.test(l)) return [];
+  // A comma LIST, not a comma NOTE: 'flour, sugar, eggs' names three things,
+  // where '2 cups flour, sifted' names one with a note — and a note never
+  // comes with two commas and no measure in front of it.
+  const commas = (l.match(/,/g) ?? []).length;
+  const parts = commas >= 2 && ingredientParts(l).qty === null ? l.split(',') : [l];
+  const names: string[] = [];
+  for (const part of parts) {
+    const n = scannedName(part);
+    if (n) names.push(n);
+  }
+  return names;
+}
+
+function scannedName(text: string): string | null {
+  const p = ingredientParts(text.trim());
+  let name = bareName(p.name || text).replace(USE_TAIL, '').trim();
+  // A till prints in capitals; a pantry row reads better in a cook's case.
+  if (/[A-Z]{2}/.test(name) && name === name.toUpperCase()) name = name.toLowerCase();
+  name = name.replace(RECEIPT_PREFIX, '').replace(/^[^\p{L}]+|[^\p{L})]+$/gu, '').trim();
+  const letters = (name.match(/\p{L}/gu) ?? []).length;
+  // Too short to be a product, or mostly digits — OCR's speckle, a barcode.
+  if (letters < 3 || letters < name.replace(/\s/g, '').length / 2) return null;
+  if (name.length > 48) return null;
+  return name;
 }
