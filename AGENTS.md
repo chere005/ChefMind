@@ -4,398 +4,92 @@ The baseline for all of Sean's repos lives in ~/GIT/AgentSuite/AGENTS.md
 and is imported here; this file holds only what is true of THIS repo.
 @../AgentSuite/AGENTS.md
 
-CalMind's recipes plus a shopping list and a pantry, on CalMind's server and
-CalMind's accounts. (Reminders were removed 2026-08-21 on Sean's word — the
-`reminder` record type stays, because the shopping AND pantry rows are reminder
-records.) A CLONE of CalMind's `apps/app` and `packages/core`. `README.md` is the
-short front door and `ARCHITECTURE.md` is the map.
+CalMind's recipes + shopping list + pantry, on CalMind's server and accounts. A CLONE of CalMind's `apps/app` and `packages/core` (upstream `~/GIT/CalMind`, github.com/chere005/CalMind; the synced server lives THERE). See `README.md`, `ARCHITECTURE.md`.
 
-This was a directory inside the CalMind repo until 2026-08-22, when it was
-extracted — history preserved — into its own repo. The upstream it clones
-lives at `~/GIT/CalMind` (github.com/chere005/CalMind); the server it syncs
-through lives THERE, not here.
+## Rules
 
-## Standing rules
+- **Stay a clone.** Product fixes go upstream in CalMind first, then are copied down deliberately. Written-down divergences: `core/shopping.ts`, `units.ts`, `grocery.ts`, `variant.ts`, `core/normalize.ts`, `shopping`/`pantry` flags on `Folder`, `variants` on `Note`, screens in `ARCHITECTURE.md` "what was taken out".
+- **`SYNC_SPACE` (`app/src/api.ts`) is a constant, never configurable** — a build aimable at CalMind's records silently merges two stores.
+- **Never point a local build at the production API.** `config.ts` derives the API from the page ORIGIN; never hardcode `https://seancheren.com/...`.
+- **Reminders are removed, but the `reminder` record type stays** — shopping and pantry rows are reminder records.
+- **Version bump** (`npm run dtp` / `tdtp`: tools/dtp.sh, tools/tdtp.sh) moves five files together: `app/app.json`, `package.json`, `desktop/package.json`, `desktop/src-tauri/tauri.conf.json`, `desktop/src-tauri/Cargo.toml` (Cargo.lock follows).
+- **`ios.buildNumber` / `android.versionCode` move by hand** per device build, not per dtp.
+- **Tags are bare `x.y.0`**; no `chefmind-` namespace (old releases retagged 1.0.0/1.0.1/1.1.0).
+- **Prod is the only instance** (seancheren.com/ChefMind, `/home/public/ChefMind` only); `deploy.sh` gates are not optional, no rehearsal. SSH login in gitignored `deploy.conf` (see `deploy.conf.sample`); destination is a guarded constant.
+- **Server suite gates deploy when it can**: `deploy.sh` runs CalMind's PHP suite from `$CALMIND_REPO` (default `~/GIT/CalMind`), says so OUT LOUD if absent (live API `spaces` gate is then the only server check). `e2e-router.php` uses the same checkout.
+- **`packages/core` is platform-free, ONE barrel (`src/index.ts`).** Import `from '@calmind/core'` only, no deep paths; a new core file is unreachable until the barrel names it.
+- **Records = clear `id`/`type`/`updated`/`deleted` + opaque `payload`** (`core/types.ts`); folders/sections/calendars are records, items point at them BY ID.
+- **`core/sync.ts` is the one engine**: per-record last-write-wins on `updated`, a TIE KEEPS THE INCUMBENT (echo of our push = no-op), `cursor` = "have everything up to seq N". Transport-agnostic.
+- **`app/src/store.tsx` persists the snapshot to AsyncStorage IMMEDIATELY; only the network round-trip is debounced (800 ms)** — debouncing the persist lost an edit to a reload.
+- **Recipes screen is `screens/Notes.tsx`** (record type still `note`); `screens/Shopping.tsx` exports `Shopping()` and `Pantry()` as `<FlagList kind>` reading `folder.payload[kind]`. Storage keys prefixed `chefmind.` and tagged by instance (shared origin with CalMind).
+- **Snapshot is the device's only copy between syncs**: a store that will not parse is moved aside and reported, never treated as an empty account; ask what happens when a write fails.
+- **`spec/*.json` is DATA the suite reads** (`spec.test.ts`, `protocol.json`), shared with CalMind web + native cores — behaviour changes amend the vector, never the test around it.
+- **Spaces/filenames**: `space` is whitelisted in `sync_space()` (CalMind `server/lib/app.php`), never sanitised.
 
-- **It is a clone, so keep it one.** A fix that belongs to the product belongs
-  upstream in CalMind first and gets copied down — across repos now, which
-  makes the copying a deliberate act rather than a shared working tree. The
-  deliberate divergences are written down: `core/shopping.ts`, `core/units.ts`,
-  `core/grocery.ts` and `core/variant.ts` (no twins upstream),
-  `core/normalize.ts` (no calendar or habit starters, plus the shopping and
-  pantry folders), the `shopping` and `pantry` flags on `Folder`, `variants` on
-  `Note`, and the screens listed in `ARCHITECTURE.md`'s "what was taken out".
-- **The space is not configurable.** `SYNC_SPACE` in `app/src/api.ts` is a
-  constant. A build that could be aimed at CalMind's records would merge two
-  stores into whichever one synced last, silently.
-- **Never point a local build at the production API.** `config.ts` derives the
-  API from the page's ORIGIN for exactly this reason. It said
-  `https://seancheren.com/...` first, and running the app on a laptop under
-  that would have written test records into Sean's real store through an API
-  that does not know the space yet.
-- **`npm run dtp` / `npm run tdtp`** (tools/dtp.sh, tools/tdtp.sh). Either
-  lane bumps the version in the five files that must move together: `app/app.json`
-  (version), `package.json`, `desktop/package.json`,
-  `desktop/src-tauri/tauri.conf.json` and `desktop/src-tauri/Cargo.toml`
-  (Cargo.lock follows). `ios.buildNumber`/`android.versionCode` move by hand
-  per device build, not per dtp. What the lane ships, in what order, and what
-  it refuses is **"The release lane, end to end"** below — one account, which
-  `ARCHITECTURE.md` points at rather than repeating.
-  The old `chefmind-` namespace existed because two apps shared
-  CalMind's repo; this repo's history carries those releases retagged as
-  1.0.0/1.0.1/1.1.0, and CalMind no longer holds a `chefmind-` tag at all.
-- **Prod is the only instance.** Sean, 2026-08-21: straight to
-  seancheren.com/ChefMind. So `deploy.sh`'s gates are not optional and there
-  is no rehearsal to fall back on. The SSH login lives in `deploy.conf`
-  (gitignored, see deploy.conf.sample); the destination is a guarded constant,
-  proven by `npm run test:deploy` breaking copies of the real script.
-- **The server suite gates the deploy when it can.** The API is CalMind's, so
-  its PHP suite is the one that proves the sync space; `deploy.sh` runs it
-  from the sibling checkout (`$CALMIND_REPO`, default `~/GIT/CalMind`) and
-  says so OUT LOUD when no checkout exists — the live API `spaces` gate is
-  then the only server check. `e2e-router.php` reaches the same checkout for
-  local runs.
+## Commands
 
-## How it is wired
+```
+npm run test            # core (test:core, --run) then app (test:app)
+npm run typecheck       # tsc --noEmit over packages/core and app
+npm run test:deploy     # breaks copies of deploy.sh; no network/SSH/deploy.conf, needs npm install
+npm -w @calmind/core run test -- --run test/shopping.test.ts
+npm -w @calmind/core run test -- --run -t 'pantry'
+```
 
-- **`packages/core` is the brain and it is platform-free**, exported through
-  ONE barrel (`src/index.ts`). Every import in `app/` is
-  `from '@calmind/core'` — there is not a single deep path into the package,
-  and a new core file is not reachable until the barrel names it.
-- **A record is sync metadata plus an opaque `payload`** (`core/types.ts`).
-  `id`, `type`, `updated` and `deleted` stay in the clear so the server can
-  merge without reading content; everything the user wrote is inside
-  `payload`. Folders, sections and calendars are records too, and items point
-  at them BY ID — so a rename touches one record instead of chasing a name
-  through five files.
-- **`core/sync.ts` is the engine, and it exists once for all platforms.**
-  Per-record last-write-wins on `updated`; a TIE KEEPS THE INCUMBENT, which is
-  what makes an echo of our own push a no-op instead of a record two devices
-  hand back and forth for ever. `cursor` means "I have everything up to seq
-  N", so a pull is only the tail. It is transport-agnostic: the app hands it a
-  function that POSTs a `SyncRequest`.
-- **`app/src/store.tsx` is the app's one stateful seam** — a React context
-  wrapping that engine, local-first. An edit lands in the engine and the
-  screen renders from it; the SNAPSHOT is written to AsyncStorage
-  IMMEDIATELY, and only the network round-trip is debounced (800 ms). The
-  ordering is not incidental: debouncing the persist too lost an edit to a
-  reload, which the e2e drag spec caught.
-- **`app/src/api.ts` is the thin HTTP edge** — action posts, bearer token,
-  JSON both ways, a 60 s timeout because web `fetch` has none — and it is
-  where `SYNC_SPACE` lives. **`app/src/config.ts` decides WHERE**, deriving
-  the API from the page's origin with the tauri and localhost branches the
-  traps below explain.
-- **There are seven screens, and two of them are one file.**
-  `screens/Notes.tsx` is Recipes (the record type is still `note`);
-  `screens/Shopping.tsx` exports both `Shopping()` and `Pantry()` as
-  `<FlagList kind>`, reading `folder.payload[kind]`; `nav.tsx` is the
-  four-tab bar. Storage keys are prefixed `chefmind.` and tagged by instance,
-  because this app and CalMind share one origin and would otherwise share one
-  localStorage key.
+- Go through npm, not bare `vitest`: the package script pins `TZ=America/Chicago`.
+- No linter/formatter; typecheck + core suite are the whole static gate. npm workspaces: `packages/*`, `app`, `desktop`.
+- Local run: three-line recipe in `ARCHITECTURE.md` (export web build, patch head, serve with `e2e-router.php` on 8792).
 
-- **The lane ends non-zero when a device build is owed.** The release still
-  shipped — live, tagged, status card closed `ok` severity 2 — but a run that
-  skipped a build for want of a phone must not hand back a clean 0, or "it all
-  worked" gets read off an exit status that never checked. CoreMind's batch
-  catches it and still ships every repo after this one.
+## Platforms
 
-## Development
-
-- **Tests**: `npm run test` runs `packages/core`'s suite (`test:core`, with
-  `--run`, no watch mode) and then the app's own (`test:app`, the row-drag
-  maths in `app/test`). A tdtp's full pass runs both. One file or one case:
-
-  ```
-  npm -w @calmind/core run test -- --run test/shopping.test.ts
-  npm -w @calmind/core run test -- --run -t 'pantry'
-  ```
-
-  Go through npm rather than a bare `vitest`: the package script pins
-  `TZ=America/Chicago`, and the clock and day tests are written to it.
-- **`spec/*.json` is DATA the suite reads at run time**, not documentation —
-  `test/spec.test.ts` replays `parse`, `repeats`, `sort` and `clock`, and
-  `protocol.json` is read by `protocolids` and `batchlimit`. It is the
-  contract shared with CalMind's web reference and the native cores, so a
-  behaviour change starts by amending the vector, never by editing the test
-  around it.
-- **Types**: `npm run typecheck` runs `tsc --noEmit` over `packages/core` and
-  `app` — the two workspaces that are clones, not the desktop shell.
-- **There is no linter and no formatter.** The typecheck and the core suite
-  are the whole static gate; do not go looking for an eslint config to obey.
-- **`npm run test:deploy`** proves the deploy guards by breaking copies of
-  `deploy.sh` and watching each copy stop. It needs no network, no SSH and no
-  `deploy.conf`, so it is always runnable (it does need `npm install`: it
-  also proves the gate key, below, against tsc's own file list).
-- **Running it locally**: the three-line recipe is in `ARCHITECTURE.md`
-  (export the web build, patch its head, serve it with `e2e-router.php`) —
-  plus CalMind's own API, see the traps.
-- **Workspaces**: an npm workspaces monorepo — `packages/*`, `app`, `desktop`.
-
-## Platforms — what ships where, and how
-
-- **Web** is the only thing `deploy.sh` ships: the PWA frontend, to
-  `seancheren.com/ChefMind` (`/home/public/ChefMind` and nothing else — see
-  "Prod is the only instance" above). That frontend has **no server of its
-  own** — every sync goes out to CalMind's live API in the `chef` sync space,
-  and `deploy.sh`'s server-suite gate refuses to ship unless that live API
-  reports the `chef` space. Nothing here implies a ChefMind backend; there
-  isn't one.
-- **macOS**: the Tauri desktop bundle in `desktop/`. `dmg` packaging is
-  excluded from `bundle.targets` (see traps below) — the `.app` bundle is
-  the shipped artifact.
-- **Windows**: `.msi`/`.exe`, built and smoke-tested in CI only
-  (`.github/workflows/desktop-windows.yml`, dispatched after a dtp push) —
-  Tauri does not cross-compile, so it is the ONE platform this repo cannot
-  produce for itself.
-- **iOS**: builds once and installs to ALL THREE paired phones via this
-  repo's `tools/build-platforms.sh --ios` (devicectl) — Sean's, Autumn's and
-  Patricia's, since 2026-09-21. A phone that refuses is warned about and
-  skipped; the step fails only when none of them took it.
-
-  The version a phone reports is app.json's, and the step makes sure of it.
-  The generated `app/ios` is reused across releases, and its Info.plist
-  carried a literal 1.4.0 from 2026-08-22, so every phone install reported
-  1.4.0 while the other platforms moved on (found 2026-10-01). So every build
-  now syncs `expo.version` into the pbxproj's `MARKETING_VERSION` and that
-  plist and reads both back. It also reads the BUILT bundle's
-  `CFBundleShortVersionString` before installing anything, and refuses every
-  phone if it is not app.json's version.
-
-  There is no per-phone app cap any more. Apple's free-tier limit of 3 apps
-  on a device does not apply: the team (2LGYTL3FSJ) is PAID, its profile
-  carrying `TimeToLive 365` where a personal team's carries 7. Sean,
-  2026-09-21: "no more caps per phone." So the 2026-08-22 note about freeing
-  MyCalMind from the phone to make room describes a constraint that is gone.
-
-- **watchOS**: no target. `watch.ts` and the watch/widget targets were taken
-  out along with Calendar and Habits (see `ARCHITECTURE.md`'s "What was taken
-  out") — there is nothing to install to a paired watch.
-- **Android**: builds, installs, and launches on a local emulator via this
-  repo's `tools/build-platforms.sh --android`. Confirmed working
-  2026-08-22.
+- **Web**: the only thing `deploy.sh` ships; no ChefMind backend — syncs to CalMind's live API in the `chef` space, and the gate refuses to ship unless that API reports `chef`.
+- **macOS**: Tauri `desktop/`; `dmg` excluded from `bundle.targets`, the `.app` is the artifact.
+- **Windows**: `.msi`/`.exe` built and smoke-tested in CI only (`.github/workflows/desktop-windows.yml`, dispatched after a dtp push); Tauri cannot cross-compile.
+- **iOS**: `tools/build-platforms.sh --ios` (devicectl) installs to ALL THREE paired phones (Sean, Autumn, Patricia); a refusing phone is warned and skipped, step fails only if none took it.
+- **iOS version**: sync `expo.version` into pbxproj `MARKETING_VERSION` + Info.plist (generated `app/ios` is reused), read both back, and refuse every phone if the BUILT `CFBundleShortVersionString` != app.json's.
+- **No per-phone app cap**: team 2LGYTL3FSJ is PAID.
+- **watchOS**: no target. **Android**: `tools/build-platforms.sh --android` on a local emulator.
 
 ## The release lane, end to end
 
-**This repo ships itself.** macOS, iOS and Android are built by this repo's
-own `tools/build-platforms.sh`, which the `dtp`/`tdtp` lane runs. Only Windows
-is somebody else's (CI, since Tauri cannot cross-compile). `tools/dtp.sh`'s
-head comment is the step list; what a reader coming to it cold needs is the
-shape and the reasons:
-
-1. **It refuses BEFORE it ships, never after.** HEAD not on `main` (the push
-   names main explicitly, so any other branch would deploy and tag a tree it
-   then does not push, while printing "pushed"); uncommitted tracked changes;
-   a tree the pull left dirty (`git pull --autostash` exits 0 even when the
-   autostash pop conflicted, so the check runs again after it); a version that
-   is not `x.y.z`; a tag that already exists. Each of those stops the lane
-   with nothing touched.
-2. **The version bump, or the reuse.** A version a previous run bumped but
-   never tagged is SHIPPED AGAIN rather than skipped past, so re-running a
-   failed lane does not burn a number. Every substitution is verified after
-   the fact — a substitution that matches nothing reports success, which is
-   AcctMind's hard-learned lesson, not a hypothetical.
-3. **`./deploy.sh --yes-prod`** — the web, and the only thing deployed. Its
-   gates live in there; a failed deploy stops everything and is never tagged
-   around. Under a tdtp, its typecheck and core suite do not run a second
-   time over the tree the full pass has just checked. `tools/gate-key.mjs`
-   hashes everything tsc and vitest can read, minus the version fields the
-   bump rewrites. The full pass hands that key down when the tree hashed the
-   same before and after its checks. deploy.sh stands down only when the tree
-   in front of it still hashes to it, and says so. Any difference, or no key
-   at all, and it runs them as always. `npm run test:deploy` breaks copies to
-   prove the key moves with every input and the checks stay on in every
-   other case.
-4. **The macOS bundle, BEFORE the tag.** That order is the whole point: a
-   broken desktop build leaves the version untagged, so the re-run reuses it,
-   exactly as a failed deploy does.
-5. **Tag `x.y.0` (bare), push `--atomic --follow-tags`,** then dispatch the
-   desktop-windows workflow. `--atomic` because `--follow-tags` is per-ref: a
-   tag can land on the remote while `main` is rejected, publishing a tag for a
-   commit nobody can fetch. If the push is refused the local tag comes back
-   off, leaving the version untagged and reusable.
-6. **The device builds, AFTER the push** — iOS on the phone, Android on an
-   emulator, one at a time and never in parallel. They cannot un-ship a
-   release that is already live and tagged, so a failure here unpicks nothing:
-   it prints the exact `sh tools/build-platforms.sh --ios` to re-run, closes
-   the status card `ok` severity 2, and **ends the lane non-zero**. That last
-   part was missing until 2026-08-23: 1.9.0 exited 0 with the iOS build
-   skipped, because the lane could not pick a phone out of the two paired to
-   this machine (that half is fixed in `build-platforms.sh`, which now
-   disambiguates by name). Same rule as CoreMind's `bin/dtp.sh`: "it all
-   worked" cannot be read off the exit status.
-
-**One heavy build at a time is kept by a lock, among the builds that take
-it.** Every platform block in `tools/build-platforms.sh` (macOS, iOS, Android,
-installs included) runs under `tools/heavy-lock.sh`, the suite's machine-wide
-lock at `/tmp/mind-heavy-<uid>.lock`. A block that finds the lock held by
-another build waits for it, naming whose it is every 30 s, and gives up after
-30 minutes. **It sees only builds that take it**: as of 2026-10-01, the
-AcctMind, CalMind, ChefMind and MyCalMind platform blocks, MyCalMind's
-`tools/deploy-device.sh`, AcctMind's desktop smoke and CoreMind's fallback
-`bin/build-platforms.sh`. It looks for no xcodebuild, gradle or cargo process,
-so a block still starts beside WriteMind's builds and tests (and
-WriteMindCross's), a TestMindSuite fork's lane (qdtp), and any build run by
-hand: this repo's `npm run desktop` or `app/`'s `npm run ios`/`android`, a
-terminal xcodebuild, or a build started from Xcode's own window. For those,
-one at a time is still a rule to remember. The helper is canon's bytes (an
-exact row in `CoreMind/consumers/ChefMind.tsv`): fix it in CoreMind, never
-here.
-
-**Which platforms**: naming one selects only it, naming none means all of
-them, and `--web` is how you say "the release and no platform builds". That is
-`tools/build-platforms.sh`'s own convention — positive selection, because
-zeroing the OTHERS per flag does not compose past two — and `tools/dtp.sh`
-takes the same flags.
-
-**It reports to seancheren.com/status** — the baseline's rule, and this repo
-was the exception to it until 2026-08-23. Sean that day: *"i dont see the tdtp
-from ChefMind on status"*. A repo that ships ITSELF was precisely the one that
-had never reported, so the page went quiet for exactly the runs nobody else
-knew were coming, and the history graph recorded no purple for them at all.
-The lane now calls CoreMind's `bin/report-status.sh` from beside this
-checkout: a `start` before the tree is touched, a `finish` with a severity at
-the end, and an EXIT/INT/TERM trap so a lane that dies anywhere — failed
-deploy, refused push, Ctrl-C — does not leave this repo purple for ever. The
-call is `|| true` on top of a reporter that already exits 0 on every failure
-path, because CoreMind may not be checked out beside this repo at all.
-
-**A batch owns its own card.** Under CoreMind's orchestrator `MIND_RUN_ID` is
-set, and this lane then opens no run of its own — reporting again would draw a
-second card for a job that is one job (Sean, 2026-08-23: *"there should be one
-card per tdtp if multiple jobs are triggered in one batch"*). Run alone the
-variable is unset and the lane opens and closes its own, as before.
-
-**No canon-drift gate runs here.** `npm run dtp` from this repo checks the
-things above and nothing about canon. The drift gate belongs to the BATCH:
-CoreMind's `bin/dtp.sh` propagates canon first and then refuses to tag
-anything if that propagation changed CalMind, ChefMind, AcctMind or MyCalMind
-— the tree "was carrying drift", and a release tagged then would name
-something nobody reviewed. So `sh bin/dtp.sh all` is gated on this repo's
-canon files and a lane run from here is not. What this repo owes canon is
-listed in `CoreMind/consumers/ChefMind.tsv`.
-
-**It was not always so**, and the hole is worth remembering: until 2026-08-23
-the platform builds lived only in CoreMind's shared `bin/build-platforms.sh`,
-so a ChefMind release could deploy, tag and push with the Mac bundle still
-built from whatever was last lying around. It did — the `.app` was a day
-behind and had never heard of the Pantry tab, while the web had shipped it.
-Sean: *"This repo should be able to ship itself (and needed dependencies) on
-its own... coremind is to ship all apps simultaneously."* CoreMind now detects
-an app carrying `tools/build-platforms.sh` and passes `--platforms` through to
-its lane rather than reaching in afterwards.
-
-CoreMind is still what ships the SUITE at once: `sh bin/dtp.sh all --full
---platforms` runs every app's tdtp lane in dependency order (core first, then
-CalMind, then this repo — ChefMind's deploy depends on CalMind's live API
-being up). There is no per-phone app cap to stay under — see **iOS** in
-Platforms above: the team is paid, and Sean settled it on 2026-09-21 with
-"no more caps per phone". MyCalMind is installed by the suite lane too, as
-of the same day: it was held back only to leave a slot free on a phone that
-no longer rations them, and it was already sitting on Sean's own phone at
-1.8.0 while the rule said it never got there.
+- **This repo ships itself**: macOS/iOS/Android via its own `tools/build-platforms.sh` (run by dtp/tdtp); only Windows is CI. Step list is `tools/dtp.sh`'s head comment.
+- **Platform flags**: naming one selects only it, none = all, `--web` = release with no platform builds; `tools/dtp.sh` takes the same flags.
+- **Refuses BEFORE shipping, nothing touched**: HEAD not on `main`; uncommitted tracked changes; tree dirty after the pull (`git pull --autostash` exits 0 on a conflicted pop, so re-check); version not `x.y.z`; tag already exists.
+- **A bumped-but-untagged version is SHIPPED AGAIN**, not skipped, so a failed lane re-run burns no number; verify every substitution after (a no-match substitution reports success).
+- **`./deploy.sh --yes-prod`** ships the web, the only deploy; a failed deploy stops everything, never tagged around.
+- **Gate key**: under tdtp, `tools/gate-key.mjs` hashes everything tsc/vitest reads (minus version fields); deploy.sh skips its typecheck + core suite only if the tree still hashes to the key the full pass handed down (and says so), else runs them. `test:deploy` proves it.
+- **macOS bundle BEFORE the tag**: a broken desktop build leaves the version untagged and reusable.
+- **Tag `x.y.0`, push `--atomic --follow-tags`**, then dispatch desktop-windows; `--follow-tags` is per-ref so a tag could land while `main` is rejected. A refused push removes the local tag.
+- **Device builds AFTER the push**, iOS then Android, one at a time never parallel; failure unpicks nothing: prints the `sh tools/build-platforms.sh --ios` to re-run, closes the status card `ok` severity 2, **ends the lane non-zero** (like CoreMind `bin/dtp.sh`).
+- **Heavy-lock**: every platform block in `tools/build-platforms.sh` runs under `tools/heavy-lock.sh` (`/tmp/mind-heavy-<uid>.lock`, waits naming holder every 30 s, gives up after 30 min). It sees only builds that take it (AcctMind, CalMind, ChefMind, MyCalMind blocks, MyCalMind `tools/deploy-device.sh`, AcctMind desktop smoke, CoreMind fallback `bin/build-platforms.sh`).
+- **Not locked, so serialize by hand**: WriteMind/WriteMindCross builds, TestMindSuite qdtp, `npm run desktop`, `app/` `npm run ios`/`android`, terminal xcodebuild, Xcode GUI builds.
+- **`tools/heavy-lock.sh` is canon's bytes** (row in `CoreMind/consumers/ChefMind.tsv`): fix in CoreMind, never here.
+- **Reports to seancheren.com/status** via CoreMind's `bin/report-status.sh` beside this checkout: `start` before touching the tree, `finish` with severity, EXIT/INT/TERM trap; call is `|| true` (CoreMind may be absent).
+- **Under CoreMind's orchestrator `MIND_RUN_ID` is set** and the lane opens no card of its own (one card per batch); unset = it opens/closes its own.
+- **No canon-drift gate here**; it belongs to CoreMind's `bin/dtp.sh` batch (refuses to tag if propagation changed CalMind/ChefMind/AcctMind/MyCalMind). What this repo owes canon: `CoreMind/consumers/ChefMind.tsv`.
+- **Suite order**: `sh bin/dtp.sh all --full --platforms` (CoreMind) runs core, then CalMind, then ChefMind (deploy needs CalMind's live API); CoreMind passes `--platforms` to apps carrying `tools/build-platforms.sh`. MyCalMind is installed by the suite lane too.
 
 ## The three lists, and the rules they keep
 
-- **A shopping row and a pantry row are both `reminder` records**, in folders
-  wearing the `shopping` and `pantry` flags. One screen renders both
-  (`screens/Shopping.tsx`, `<FlagList kind>`), because the only difference is
-  which flag it reads. `normalize` seeds exactly one folder of each and neither
-  counts as an ordinary reminders folder — miss that second half and the
-  pantry is created on one load and demolished as a stray on the next.
-- **The pantry SUBTRACTS.** Anything on it is left off the shopping list
-  entirely — not added and struck through. The matching lives in
-  `core/shopping.ts` so every route obeys it, and it is on the ingredient NAME:
-  'flour' must never claim 'almond flour'.
-- **Conversion is within a DIMENSION only.** A cup is 236.588 ml by
-  definition, so cups and tablespoons of one thing become one line in
-  millilitres. A cup to a GRAM needs a density that differs per ingredient, so
-  it stays two lines — the original rule, narrowed rather than dropped. See
-  `core/units.ts`.
-- **A row is filed by its ingredient, not by its measure** — otherwise '3
-  cloves garlic' lands in the spice rack. The one exception is `can`/`jar`,
-  which say where a thing is SOLD (`core/grocery.ts`, `ingredientAisle`).
-- **Refresh is a LOOSER match, never a looser conversion.** `recombineLines`
-  folds plurals and preparation words ('chopped onions' meets 'onion'),
-  prefers a bracketed metric measure to the cook's own, and keeps the shortest
-  of the names it merged. What it must never start doing is crossing mass with
-  volume — the dimension rule above is the one thing 'additional effort' was
-  not a licence to relax, and the prep-word list is deliberately short for the
-  same reason: 'dried', 'ground' and 'whole' name a different thing on the
-  shelf, so they stay.
-- **A variant names its sections by TEXT, not by index.** A variant pointing at
-  "the third subheader" would silently mean something else the moment one was
-  added above it. Renaming a subheader detaches it, which is visible; an index
-  would have been silent. `liveSections` drops names the card no longer has.
+- **Shopping and pantry rows are both `reminder` records** in folders flagged `shopping` / `pantry`, rendered by one `<FlagList kind>`. `normalize` seeds exactly one of each and neither counts as an ordinary reminders folder — else the pantry is created on one load and deleted as a stray on the next.
+- **The pantry SUBTRACTS**: anything on it is left off the shopping list entirely (not struck through). Matching lives in `core/shopping.ts`, on the ingredient NAME: 'flour' must never claim 'almond flour'.
+- **Conversion within a DIMENSION only** (`core/units.ts`): cup = 236.588 ml, so cups + tbsp of a thing become one ml line; cup to GRAM needs per-ingredient density, so stays two lines.
+- **Filed by ingredient, not measure** (`core/grocery.ts`, `ingredientAisle`) — else '3 cloves garlic' lands in the spice rack; the exception is `can`/`jar` (where it's SOLD).
+- **Refresh is a LOOSER match, never a looser conversion**: `recombineLines` folds plurals/prep words, prefers bracketed metric, keeps the shortest merged name; never cross mass with volume; keep the prep-word list short ('dried', 'ground', 'whole' stay).
+- **A variant names sections by TEXT, not index** (an index silently shifts); renaming a subheader detaches it visibly; `liveSections` drops names the card lacks.
 
-## Traps that have cost real time here
+## Traps
 
-- **`space` reaches a filename.** It is whitelisted in `sync_space()` (in
-  CalMind's `server/lib/app.php`), never sanitised. "Reject anything not on
-  the list" and "strip the characters I thought of" are not the same door.
-- **`simctl`/browser text injection lowercases and drops characters.** The
-  `**Ingredients**` heading typed into the note body came out
-  `**ingredients**`; core matches it case-insensitively, so this cost only
-  confusion — but the same injection silently truncated a URL at the first `.`
-  elsewhere. Read back what you typed before believing a failure.
-- **A two-handled basket icon reads as a WASTE BIN at tab-bar size.** Next to a
-  list of things you are about to buy, that is the worst possible misread. One
-  arc over the top is the shape nothing else has.
-- **`␡` has no glyph in the app's font** and renders as a literal `DEL` box.
-- **tauri.conf.json takes NO extra keys.** A `"_note"` alongside the real ones
-  fails the schema outright: `Additional properties are not allowed`. Notes
-  about that file go here. Two of them: the bundle targets exclude `dmg`,
-  because create-dmg's bundle_dmg.sh needs Finder/AppleScript and dies on this
-  machine while the `.app` bundles fine; and `msi`/`nsis` build in CI —
-  `.github/workflows/desktop-windows.yml`, dispatched after a dtp's push —
-  since Tauri does not cross-compile and Windows needs its own toolchain.
-  `bundle.icon` names only `icon.icns`, `icon.ico` and `icon.png`; a re-run of
-  `npx tauri icon` also writes `android/`, `ios/`, `Square*Logo.png` and
-  `StoreLogo.png` into `icons/`, which nothing here uses — delete them after.
-- **The desktop shell's `location.origin` is `tauri://localhost`.** Deriving
-  the API from it aims every request at a path the asset protocol answers with
-  index.html, which reads back as "server error (500)" on the login card.
-  `config.ts` carries an explicit tauri branch; CalMind's does too.
-- **`app/ios/build/` is NOT disposable.** It looks like derived output and is
-  gitignored, but ReactCodegen's generated sources live under
-  `build/generated/ios/` and are written by `pod install`, not by xcodebuild.
-  Delete it to free disk and the next build dies on seven "Build input file
-  cannot be found" errors naming files nobody wrote. `pod install` (with the
-  UTF-8 locale) puts them back.
-- **A build killed by a full disk leaves a Gradle LOCK behind.** The next run
-  fails in under a second with "Cannot lock file hash cache … already been
-  locked by this process", which reads as a concurrency bug rather than
-  wreckage. `./gradlew --stop` and remove `app/android/.gradle`.
-- **A Directions row must be NUMBERED or splitRecipeBody ends the block there.**
-  A test fixture with '- salt' under **Directions** put half the card in
-  `after`, untouched — which read as the variant filter leaking. The parser was
-  right and the fixture was wrong, which is the way round that is easy to miss.
-- **Metro's port is not a constant.** `config.ts` used to spot the dev server
-  by an allow-list of ports (8081, 19006). Start it on any other — because 8081
-  is busy with CalMind's, which is the normal case on this machine — and the
-  app aimed at `http://localhost:<that>/calmind/api/index.php`, got Metro's
-  index.html and reported "server error" on the login card. It matches the
-  HOST now.
-- **`Modal` fades in, so a screenshot taken right after opening one shows it
-  half-transparent.** Two minutes went on "why is the variants window see-
-  through" before the DOM said it was `rgb(26,26,26)` all along.
-- **The head patch IS the PWA, so a desktop build that skips it ships a
-  different page from the site.** `tools/patch-web-html.mjs` does not just
-  touch the `<head>` — it writes `sw.js` and `manifest.webmanifest` and
-  injects the service-worker registration. CoreMind's mac path ran
-  `export:web` alone, so the Mac bundle carried the bare export (6 staged
-  files) while the site and the Windows CI bundle carried the patched one (9),
-  and nothing compared them. `tools/build-platforms.sh` patches. The worker
-  cannot register from `tauri://localhost` and does not need to: the injected
-  call ends in `.catch(...)`.
-- **Ask what happens when a write fails.** Same rule as upstream: the snapshot
-  is the device's only copy between syncs, and a store that will not parse is
-  moved aside and reported, never treated as an empty account.
-- **The local run needs CalMind's dev API on 8788 as well as the router.**
-  `config.ts` returns `http://127.0.0.1:8788/api/index.php` for ANY localhost
-  hostname — that is the Metro-dev fallback, and the exported bundle carries
-  it too (grep `app/dist` and it is there). So the page served by
-  `e2e-router.php` on 8792 does NOT talk to the router's own `/calmind/api`
-  half; it talks to 8788, which is where CalMind's README puts
-  `php -S 127.0.0.1:8788 -t server/public`. Start that too — CORS on that API
-  is open, so the cross-port call is fine — or the login card fails against a
-  port with nothing on it while the router sits there answering nothing.
+- **`simctl`/browser text injection lowercases and drops chars** (`**Ingredients**` → lowercase; a URL truncated at the first `.`) → read back what you typed before believing a failure.
+- **Two-handled basket icon reads as a waste bin at tab-bar size** → use one arc over the top.
+- **`␡` has no glyph in the app font** → renders a literal `DEL` box.
+- **tauri.conf.json takes NO extra keys** (a `"_note"` fails the schema: `Additional properties are not allowed`). `dmg` excluded (create-dmg needs Finder/AppleScript, dies here); `msi`/`nsis` build in CI; `bundle.icon` names only `icon.icns`, `icon.ico`, `icon.png`.
+- **`npx tauri icon` also writes `android/`, `ios/`, `Square*Logo.png`, `StoreLogo.png` into `icons/`** → unused, delete after.
+- **Desktop `location.origin` is `tauri://localhost`** → deriving the API from it gives "server error (500)" on the login card; `config.ts` has an explicit tauri branch (CalMind's too).
+- **Metro's port is not a constant** (8081 is usually CalMind's) → an allow-list of ports aimed at Metro's index.html and "server error"; `config.ts` matches the HOST.
+- **`app/ios/build/` is NOT disposable** (ReactCodegen sources under `build/generated/ios/` come from `pod install`) → deleting it gives seven "Build input file cannot be found" errors; run `pod install` with the UTF-8 locale.
+- **Disk-full kill leaves a Gradle LOCK** ("Cannot lock file hash cache … already been locked by this process", fails in <1 s) → `./gradlew --stop` and remove `app/android/.gradle`.
+- **A Directions row must be NUMBERED or `splitRecipeBody` ends the block there** → a '- salt' fixture put half the card in `after`, looking like a variant leak; the fixture is wrong, not the parser.
+- **`Modal` fades in** → a screenshot right after opening shows it half-transparent; wait.
+- **The head patch IS the PWA**: `tools/patch-web-html.mjs` writes `sw.js`, `manifest.webmanifest` and injects the service-worker registration; a desktop build that skips it ships a different page (6 vs 9 staged files). `build-platforms.sh` patches; the worker can't register from `tauri://localhost` and needn't (`.catch(...)`).
+- **Local run needs CalMind's dev API on 8788 as well as the router**: `config.ts` returns `http://127.0.0.1:8788/api/index.php` for ANY localhost hostname (also in the exported bundle), so the page on 8792 talks to 8788, not the router's `/calmind/api` → start `php -S 127.0.0.1:8788 -t server/public` in CalMind (CORS open) or login fails against an empty port.
