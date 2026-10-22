@@ -27,6 +27,10 @@ npm run export:web && node tools/patch-web-html.mjs app/dist/index.html
 CALMIND_DATA_DIR=/tmp/chefmind-dev-data php -S 127.0.0.1:8792 e2e-router.php
 ```
 
+Set `EXPO_PUBLIC_API_URL` to a full `/api/index.php` endpoint before exporting
+or building to target another server. Expo embeds this public value in the
+bundle; leaving it unset keeps the existing defaults.
+
 Then http://127.0.0.1:8792/ChefMind/. The API is CalMind's and comes from a
 sibling checkout, which needs a server of its own —
 [ARCHITECTURE.md](ARCHITECTURE.md#running-it-locally) has the whole recipe.

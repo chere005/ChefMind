@@ -119,6 +119,14 @@ The space is a CONSTANT in `app/src/api.ts`, never configurable: a ChefMind
 build that could be pointed at CalMind's records would merge two apps' stores
 into whichever synced last.
 
+The server endpoint can be selected for a build with `EXPO_PUBLIC_API_URL`,
+for example `https://test.seancheren.com/calmind/api/index.php`. Set it in
+`app/.env.local` or the build environment. Expo embeds it in web and native
+bundles, so it is public configuration, not a place for secrets. When unset,
+the web app keeps its origin-based routing and native builds keep their
+production default. Changing this endpoint never changes the fixed `chef`
+space.
+
 `deploy.sh` **refuses to ship** unless the live API answers the public `spaces`
 action naming `chef`. An API that does not know the parameter ignores it, and
 then nothing errors while every ChefMind record lands in CalMind's own store —
