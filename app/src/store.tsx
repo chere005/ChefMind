@@ -100,6 +100,7 @@ type Store = {
   refusedLabels: string[];
   signIn: (s: Session) => Promise<void>;
   signOut: () => Promise<void>;
+  clearDeletedAccount: () => Promise<void>;
   setSession: (s: Session) => Promise<void>; // token refresh (password change)
   mutate: (fn: (engine: SyncEngine) => void) => void;
   syncNow: () => Promise<void>;
@@ -124,6 +125,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const engineRef = useRef(new SyncEngine());
   const [ready, setReady] = useState(false);
   const [session, setSessionState] = useState<Session | null>(null);
+  const sessionRef = useRef<Session | null>(null);
   const [recs, setRecs] = useState<AnyRec[]>([]);
   const [syncState, setSyncState] = useState<SyncState>('idle');
   const [persistFailed, setPersistFailed] = useState(false);
@@ -133,6 +135,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [sharedPartner, setSharedPartner] = useState<string | null>(null);
   const [sharedRaw, setSharedRaw] = useState<AnyRec[]>([]);
   const timers = useRef<{ persist?: ReturnType<typeof setTimeout>; sync?: ReturnType<typeof setTimeout> }>({});
+  const persistQueue = useRef<Promise<void>>(Promise.resolve());
 
   // Seeding starters against an EMPTY engine that simply hasn't pulled yet would
   // duplicate everything the server already holds — normalize only runs once the
@@ -153,11 +156,16 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   // just before a reload never reached the snapshot and quietly vanished
   // (caught by the e2e drag spec). Only the network round-trip is debounced.
   const persistNow = useCallback((user: string) => {
+    if (sessionRef.current?.username !== user) return;
     // A failure here used to be swallowed whole. It is the quietest kind of
     // loss there is: everything keeps working, and then a reload comes back
     // to yesterday. Storage refuses for ordinary reasons — a full quota, a
     // browser wiping site data — so say it rather than carry on as if saved.
-    AsyncStorage.setItem(snapKey(user), JSON.stringify(engineRef.current.toSnapshot()))
+    const snapshot = JSON.stringify(engineRef.current.toSnapshot());
+    const write = persistQueue.current
+      .catch(() => {})
+      .then(() => AsyncStorage.setItem(snapKey(user), snapshot));
+    persistQueue.current = write
       .then(() => setPersistFailed(false))
       .catch(() => setPersistFailed(true));
   }, []);
@@ -315,7 +323,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   }, [syncNow]);
 
   // session in a ref so the periodic sync closure never goes stale.
-  const sessionRef = useRef<Session | null>(null);
   sessionRef.current = session;
 
   /**
@@ -467,6 +474,22 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     clearSession();
   }, [clearSession]);
 
+  const clearDeletedAccount = useCallback(async () => {
+    const user = sessionRef.current?.username;
+    sessionRef.current = null;
+    clearTimeout(timers.current.persist);
+    clearTimeout(timers.current.sync);
+    syncAgain.current = false;
+    if (user) {
+      await persistQueue.current;
+      // The account is gone on the server; its local cache must not survive
+      // sign-out or be restored if the same username is later registered.
+      await AsyncStorage.removeItem(snapKey(user)).catch(() => {});
+    }
+    await forgetSession();
+    clearSession();
+  }, [clearSession]);
+
   const setSession = useCallback(async (s: Session) => {
     // Same rule: a refreshed token must reach memory even if the disk will
     // not take it, or the app keeps using the old one it can no longer save.
@@ -558,7 +581,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <Ctx.Provider value={{ ready, session, recs, syncState, persistFailed, refusedLabels, signIn, signOut, setSession, mutate, syncNow, undoLastDelete, partners, sharedPartner, sharedPartnerLabel, sharedRecs, sharedPut }}>
+    <Ctx.Provider value={{ ready, session, recs, syncState, persistFailed, refusedLabels, signIn, signOut, clearDeletedAccount, setSession, mutate, syncNow, undoLastDelete, partners, sharedPartner, sharedPartnerLabel, sharedRecs, sharedPut }}>
       {children}
     </Ctx.Provider>
   );

@@ -22,8 +22,15 @@ import { Platform } from 'react-native';
  * and for the same reason: trying the app should mean trying your real data.
  */
 const PROD_API = 'https://seancheren.com/calmind/api/index.php';
+// Expo inlines this public endpoint into web and native bundles at build time.
+// It selects the server only; SYNC_SPACE remains the fixed `chef` space.
+// Unset keeps the existing origin-based web routing and production native default.
+const BUILD_API_URL = process.env.EXPO_PUBLIC_API_URL;
 
 export function defaultServerUrl(): string {
+  if (typeof BUILD_API_URL === 'string' && BUILD_API_URL.trim() !== '') {
+    return BUILD_API_URL.trim();
+  }
   if (Platform.OS === 'web' && typeof location !== 'undefined') {
     // THE DESKTOP SHELL HAS AN ORIGIN, AND IT IS A LIE. Tauri serves the
     // bundle from tauri://localhost, so deriving the API from the origin aims
