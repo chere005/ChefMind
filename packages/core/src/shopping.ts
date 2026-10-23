@@ -517,7 +517,15 @@ export function pantryItemsFromPages(pages: readonly string[], have: readonly st
 }
 
 /** The till's own words: a line carrying one of these is never a product. */
-const RECEIPT_CHROME = /\b(?:sub\s*-?\s*total|total|tax(?:able)?|balance|change|cash|tender(?:ed)?|visa|mastercard|amex|discover|debit|credit|card|payment|approved|approval|auth(?:orization)?|acct|account|trans(?:action)?|terminal|cashier|register|receipt|thank(?:s| you)?|welcome|survey|savings|saved|coupon|discount|member(?:ship)?|rewards?|points|loyalty|items?\s+sold|item\s+count|tel|phone|manager|store\s*#?|st\s*#|op\s*#|tr\s*#|ref\s*#|invoice|order\s*#|signature|customer|copy|refund|return(?:s)?\s+policy|market|supermarket)\b/i;
+const RECEIPT_CHROME = /\b(?:sub\s*-?\s*total|tax(?:able)?|gst|incl(?:uded)?|balance|change|cash|tender(?:ed)?|visa|mastercard|amex|discover|debit|credit|card|paid|payment|approved|approval|auth(?:orization)?|acct|account|trans(?:action)?|terminal|cashier|register|receipt|thank(?:s| you)?|welcome|survey|savings|saved|coupon|discount|member(?:ship)?|rewards?|points|loyalty|items?\s+sold|item\s+count|tel|phone|manager|store\s*#?|st\s*#|op\s*#|tr\s*#|ref\s*#|invoice|order\s*#|signature|customer|copy|refund|return(?:s)?\s+policy|market|supermarket|cafe|branch|till|specimen|fictional)\b/i;
+// Sample receipts and some real merchant slips carry print-shop/test notices
+// in the footer. These phrases are not food names even when OCR loses the
+// punctuation or mistakes a character.
+const RECEIPT_NOTICE = /\b(?:made\s+by|free\s+to\s+use|for\s+testing|for\s+shopping\s+at)\b/i;
+// `TOTAL` by itself is also a cereal brand. A total line has a number after
+// its label; that is a stronger signal than matching the word anywhere in an
+// item name (which used to drop Total cereal from a receipt).
+const RECEIPT_TOTAL = /^\s*(?:sub\s*-?\s*total|total)\s*:?[ \t]*[$€£]?\s*\d/i;
 
 /** A heading over the list rather than a thing on it. */
 const LIST_HEADING = /^(?:ingredients?|shopping(?:\s+list)?|grocer(?:y|ies)(?:\s+list)?|pantry|list|to\s+buy|need|groceries|directions|method|instructions|notes?)\s*:?$/i;
@@ -533,7 +541,7 @@ function scannedNames(raw: string): string[] {
   let l = raw.replace(/\s+/g, ' ').trim();
   if (l === '') return [];
   if (/https?:\/\/|www\.|@\S+\.\w|\.(?:com|net|org)\b/i.test(l)) return [];
-  if (RECEIPT_CHROME.test(l)) return [];
+  if (RECEIPT_TOTAL.test(l) || RECEIPT_CHROME.test(l) || RECEIPT_NOTICE.test(l)) return [];
   // The store's address: a street number and a street word, or a state and
   // a ZIP. Asked before the SKU strip below, which would take the number.
   if (/^\d+\s.*\b(?:st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|ln|lane|hwy|highway|pkwy|parkway|way|suite|ste)\b\.?/i.test(l)) return [];
@@ -550,6 +558,9 @@ function scannedNames(raw: string): string[] {
     // An SKU or PLU at either end: four or more digits run together.
     .replace(/^\d{4,}\s+/, '')
     .replace(/\s+\d{4,}$/, '')
+    // Receipt quantity markers are not ingredient names. OCR may repeat the
+    // x in a blurry `2 x` as `2 Xx`.
+    .replace(/^\d{1,3}\s*[x×]+\s*/i, '')
     // A list's own furniture: bullets, checkboxes, numbering.
     .replace(/^(?:[-*•·◦▪●]\s+|\[\s*[xX✓]?\s*\]\s*|[☐☑☒□■]\s*|\d{1,2}[.)]\s+)/, '');
   l = scrubLine(precleanOcrLine(l))

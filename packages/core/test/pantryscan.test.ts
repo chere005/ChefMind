@@ -25,6 +25,35 @@ describe('pantry items out of a photographed receipt or list', () => {
     ]);
   });
 
+  it('turns OCR from a photographed paper receipt into pantry items', () => {
+    // Captured from the app's tesseract.js engine using the CC0 sample receipt
+    // photo at https://filedone.ai/sample-files/sample-receipt. The document is
+    // fictional, but the image is a phone-style photo of a printed receipt.
+    const photoOcr = [
+      'CORNER CAFE :',
+      '(a fictional cafe)',
+      '3 Example Street, Sampleton',
+      'Tax no. : SPECIMEN-TAX-0003',
+      'Receipt 2026-0918-p457',
+      '18/09/2026 08:42 Till 2',
+      '2 x Masala chai * : ‘89.89',
+      '1 X Filter coffee 55.00',
+      '2 Xx Veg sandwich 180.00',
+      '1 x Banana bread slice 65.00',
+      'TOTAL 380.00',
+      'incl. GST 5% 18.10',
+      'Paid by carqg 380.00',
+      'Thank you, see you again!',
+      'SPECIMEN - fictional receipt',
+      'made by filedone.aji for testing',
+      'Free to use (cco 1.0)',
+    ].join('\n');
+
+    expect(pantryItemsFromPages([photoOcr])).toEqual([
+      'Masala chai', 'Filter coffee', 'Veg sandwich', 'Banana bread slice',
+    ]);
+  });
+
   it('reads a written list, keeping the name and dropping the measure', () => {
     const list = ['Ingredients', '- 2 cups flour', '• 1 tsp salt', '[ ] butter, softened', '3) olive oil for frying', 'Sugar'].join('\n');
     expect(pantryItemsFromPages([list])).toEqual(['flour', 'salt', 'butter', 'olive oil', 'Sugar']);
