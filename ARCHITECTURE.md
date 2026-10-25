@@ -182,7 +182,7 @@ npm run tdtp -- --mac            # …and just the desktop bundle
 ```
 
 Naming a platform selects only it; naming none means all of them. Windows is
-CI's alone, since Tauri does not cross-compile.
+CI's alone, since Tauri does not cross-compile (see "Releases" below).
 
 What the lane does in what order — why the desktop bundle comes before the tag
 and the device builds after the push, why a device build that fails leaves the
@@ -195,3 +195,63 @@ The platform builds live in `tools/build-platforms.sh`, runnable on their own:
 ```
 sh tools/build-platforms.sh --mac --ios --android
 ```
+
+## Releases
+
+Pushing a bare version tag (`1.30.0`, no `v`) starts the **Release** workflow
+(`.github/workflows/release.yml`), which builds the desktop installers on
+GitHub's runners and attaches them to ONE GitHub release for that version. The
+release is created as a draft and published only when every expected file is on
+it:
+
+| Platform | Files |
+| --- | --- |
+| Windows (x64) | `ChefMind_<version>_x64_en-US.msi`, `ChefMind_<version>_x64-setup.exe` (NSIS) |
+| macOS (Apple silicon) | `ChefMind_<version>_aarch64.dmg` (built with `--bundles dmg` passed in CI; `tauri.conf.json` is unchanged) |
+| Checksums | `SHA256SUMS.txt` |
+
+There is no Linux build and no Intel Mac build. Jobs, in order: `prepare` (the
+tag must equal the version in every file that carries it: `package.json`,
+`app/app.json`, `desktop/package.json`, `desktop/src-tauri/tauri.conf.json`,
+`desktop/src-tauri/Cargo.toml`, checked by `tools/release-versions.mjs`; a tag
+that is already a published release is refused; the notes are the tag's
+annotation, else the tagged commit's message; the draft is created), then
+`windows` and `mac` in parallel (typecheck, then the web export and head patch
+as `deploy.sh` runs them, then `tauri build`; Windows installs the MSI on the
+runner and checks it launches and opens a ChefMind window; the Mac job also
+runs the test suites, which need a POSIX shell), then `publish` (every file is
+there, `SHA256SUMS.txt` is attached, the release is published as Latest; a
+version containing `-` is a pre-release instead). A missing file leaves the
+release a draft.
+
+**Cutting a release** is the lane: `npm run tdtp` (or `dtp`). It bumps the
+version, deploys, builds the Mac bundle, runs the preflight, tags and pushes,
+then finds the Release run the tag push started, prints its URL, and after the
+device builds waits for it and prints the published release's URL. If the
+Release fails after the tag, the deploy and tag stand; the lane reports the
+failed jobs and ends non-zero, and the fix is to correct the cause and run
+`gh run rerun <run-id> --failed`.
+
+**An existing tag with no release** (a past version, or after deleting a bad
+draft): `gh workflow run Release --ref main -f tag=<tag>`. It builds the tag's
+own tree with the current workflow.
+
+**Preflight** (`sh tools/preflight.sh [tag]`, run by the lane right before the
+tag, skippable with `--skip-preflight`): pushes HEAD to a throwaway
+`preflight/<sha7>` branch, dispatches Release there with `preflight=true`, waits,
+prints PASS or FAIL naming the failed jobs and steps, and deletes the branch.
+A preflight run builds everything but creates and uploads nothing; its jobs are
+`continue-on-error`, so a red job does not make the run red and GitHub sends no
+failed-job email. Release workflows are dispatched by name, so the first
+preflight needs `release.yml` on `main`.
+
+**No `actions/upload-artifact` or `download-artifact`**, anywhere in the
+workflow: the account's Actions artifact storage quota is full and every run
+that used it failed. Release assets do not count against that quota, so each
+build job uploads straight to the draft with `gh release upload`.
+
+**Installing the unsigned builds.** Windows shows "Windows protected your PC"
+(SmartScreen): choose *More info*, then *Run anyway*. macOS Gatekeeper stops the
+first launch of the app (not notarized): right-click it and choose *Open*, or
+System Settings > Privacy & Security > *Open Anyway*. The release notes carry
+the same two lines.

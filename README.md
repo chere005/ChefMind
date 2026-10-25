@@ -41,6 +41,11 @@ sibling checkout, which needs a server of its own —
 then the macOS bundle, then the tag and the push, and the iOS and Android
 builds last. `./deploy.sh --dry-run` previews the web deploy on its own.
 
+The tag also starts a GitHub Actions workflow that builds the Windows
+(`.msi` and `.exe`) and macOS (Apple silicon `.dmg`) installers and publishes
+them, with checksums, as one GitHub release; see
+[ARCHITECTURE.md](ARCHITECTURE.md#releases). The installers are unsigned.
+
 ## More
 
 [ARCHITECTURE.md](ARCHITECTURE.md) is the long version — the tree, what each
