@@ -1,6 +1,6 @@
 # ChefMind
 
-Recipes, a pantry and a shopping list. A [CalMind](https://github.com/chere005/CalMind) clone that signs in with a CalMind account.
+Recipes, a pantry and a shopping list.
 
 ## Disclaimer
 
@@ -17,21 +17,34 @@ Feel free to deploy this on your own website, build and deploy the iOS version, 
 ## Notes
 
 - Three tabs: Recipes · Pantry · Shopping.
-- No server of its own. Records live on CalMind's, under the same account.
+- Uses CalMind accounts. No server of its own; records live on CalMind's.
 - Runs on web, iOS, Android, macOS and Windows.
 
 ## Usage
 
-Tick the recipes you mean to cook and press *Add to shopping list*. Ingredients combine, grouped by aisle. Anything in the pantry is left off.
+### Recipes
 
-<table>
-<tr>
-<td align="center" valign="top"><img src="docs/screenshots/chefmind-recipes-mobile.png" width="200" alt="Recipes"><br><sub><b>Recipes.</b> In folders; send their ingredients to the list.</sub></td>
-<td align="center" valign="top"><img src="docs/screenshots/chefmind-recipe-mobile.png" width="200" alt="Recipe editor"><br><sub><b>Recipe editor.</b> Ingredients, quantities and steps.</sub></td>
-<td align="center" valign="top"><img src="docs/screenshots/chefmind-pantry-mobile.png" width="200" alt="Pantry"><br><sub><b>Pantry.</b> What you have, typed or scanned from a receipt.</sub></td>
-<td align="center" valign="top"><img src="docs/screenshots/chefmind-shopping-mobile.png" width="200" alt="Shopping list"><br><sub><b>Shopping list.</b> Items grouped by aisle.</sub></td>
-</tr>
-</table>
+Recipes in folders. Tick the ones you mean to cook and press *Add to shopping list*.
+
+<img src="docs/screenshots/chefmind-recipes-mobile.png" width="320" alt="Recipes">
+
+### Recipe editor
+
+Ingredients, quantities and steps.
+
+<img src="docs/screenshots/chefmind-recipe-mobile.png" width="320" alt="Recipe editor">
+
+### Pantry
+
+What you have, typed in or scanned from a receipt. Pantry items are left off the shopping list.
+
+<img src="docs/screenshots/chefmind-pantry-mobile.png" width="320" alt="Pantry">
+
+### Shopping list
+
+Ingredients combined and grouped by aisle.
+
+<img src="docs/screenshots/chefmind-shopping-mobile.png" width="320" alt="Shopping list">
 
 ## Building
 
