@@ -17,8 +17,8 @@ sign-up; the records just live in their own store on CalMind's.
 
 It runs as a web app at [seancheren.com/ChefMind](https://seancheren.com/ChefMind),
 which installs as a PWA and is the only instance there is; on iOS and Android
-via Expo; on macOS in a Tauri desktop shell; and on Windows as an `.msi` or
-`.exe` built by CI.
+via Expo; and on macOS and Windows as a Tauri desktop app, with installers
+published on GitHub Releases.
 
 ## Running it locally
 
