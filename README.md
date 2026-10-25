@@ -4,23 +4,21 @@ Feel free to deploy this on your own website, build and deploy the iOS version, 
 
 **This is a personal project to have some fun with claude code, which generated essentially all of the code, and the rest of this readme:**
 
-Recipes, with a shopping list and a pantry. Tick the recipes you mean to
-cook, press *Add to shopping list*, and their ingredients arrive on one list,
-combined and grouped by aisle in the order you walk the shop (produce first,
-frozen last). Anything already in the pantry is left off. Three tabs:
-**Recipes · Pantry · Shopping**.
+Recipes, a pantry and a shopping list. A [CalMind](https://github.com/chere005/CalMind) clone that signs in with a CalMind account.
 
-It is a clone of [CalMind](https://github.com/chere005/CalMind)'s app and core
-rather than a rewrite, and it signs in with a CalMind account: same users,
-same tokens, same passkeys. There is no ChefMind server and no separate
-sign-up; the records just live in their own store on CalMind's.
+- Tick recipes, press *Add to shopping list*: ingredients combine, grouped by aisle, pantry items skipped.
+- Three tabs: Recipes · Pantry · Shopping.
+- Runs on web (PWA), iOS, Android, macOS and Windows. Live at [seancheren.com/ChefMind](https://seancheren.com/ChefMind).
+- No server of its own. Records live on CalMind's.
 
-It runs as a web app at [seancheren.com/ChefMind](https://seancheren.com/ChefMind),
-which installs as a PWA and is the only instance there is; on iOS and Android
-via Expo; and on macOS and Windows as a Tauri desktop app, with installers
-published on GitHub Releases.
+## Screens
 
-## Running it locally
+| Recipes | Recipe editor | Pantry | Shopping list |
+| --- | --- | --- | --- |
+| ![Recipes](docs/screenshots/chefmind-recipes-mobile.png) | ![Recipe editor](docs/screenshots/chefmind-recipe-mobile.png) | ![Pantry](docs/screenshots/chefmind-pantry-mobile.png) | ![Shopping list](docs/screenshots/chefmind-shopping-mobile.png) |
+| Recipes in folders; send their ingredients to the list. | Edit ingredients, quantities and steps. | What you have, typed or scanned from a receipt. | Items grouped by aisle. |
+
+## Run
 
 ```sh
 npm install
@@ -28,28 +26,6 @@ npm run export:web && node tools/patch-web-html.mjs app/dist/index.html
 CALMIND_DATA_DIR=/tmp/chefmind-dev-data php -S 127.0.0.1:8792 e2e-router.php
 ```
 
-Then http://127.0.0.1:8792/ChefMind/. The API is CalMind's and comes from a
-sibling `../CalMind` checkout (`CALMIND_REPO` overrides), which needs a server
-of its own; [ARCHITECTURE.md](ARCHITECTURE.md#running-it-locally) has the
-whole recipe. Set `EXPO_PUBLIC_API_URL` to a full `/api/index.php` endpoint
-before exporting or building to target another server.
+Needs a sibling `../CalMind` checkout. Release: `npm run dtp` (or `tdtp`, tests first); the tag builds the installers on GitHub.
 
-## Shipping it
-
-`npm run tdtp` is the release: the tests, then the web deploy to production,
-then the macOS bundle, then the tag and the push, and the iOS and Android
-builds last. `npm run dtp` skips the full test run, and `./deploy.sh --dry-run`
-previews the web deploy on its own.
-
-The tag also starts a GitHub Actions workflow that builds the Windows
-(`.msi` and `.exe`) and macOS (Apple silicon `.dmg`) installers and publishes
-them, with checksums, as one GitHub release; see
-[ARCHITECTURE.md](ARCHITECTURE.md#releases). The installers are unsigned.
-
-## More
-
-[ARCHITECTURE.md](ARCHITECTURE.md) is the long version: the tree, what each
-screen does, what was taken out of CalMind and why, how the accounts and the
-store are split, and the deploy and release lanes in detail.
-[AGENTS.md](AGENTS.md) is the working rules for anyone, human or agent,
-changing the code. BSD 3-Clause; see [LICENSE](LICENSE).
+Docs: [ARCHITECTURE](ARCHITECTURE.md) · [AGENTS](AGENTS.md). BSD 3-Clause.
