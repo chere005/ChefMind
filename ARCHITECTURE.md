@@ -40,7 +40,7 @@ AGENTS.md, "Platforms — what ships where, and how".
 
 ## The screens
 
-Four tabs: **Recipes · Pantry · ⊕ · Shopping**.
+Three tabs: **Recipes · Pantry · Shopping**.
 
 - **Recipes** is CalMind's Notes screen, renamed. Only the labels moved — the
   record type is still `note`, the folder's app is still `notes`, and the
