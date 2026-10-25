@@ -14,11 +14,11 @@ Feel free to deploy this on your own website, build and deploy the iOS version, 
 - macOS and Windows: installers on [GitHub Releases](https://github.com/chere005/ChefMind/releases). Unsigned.
 - iOS and Android: build from source, see Building.
 
-## Notes
+## Platforms
 
-- Three tabs: Recipes · Pantry · Shopping.
-- Uses CalMind accounts. No server of its own; records live on CalMind's.
-- Runs on web, iOS, Android, macOS and Windows.
+- Web (PWA)
+- iOS and Android
+- macOS and Windows (Tauri desktop app)
 
 ## Usage
 
@@ -45,6 +45,11 @@ What you have, typed in or scanned from a receipt. Pantry items are left off the
 Ingredients combined and grouped by aisle.
 
 <img src="docs/screenshots/chefmind-shopping-mobile.png" width="320" alt="Shopping list">
+
+## Notes
+
+- Three tabs: Recipes · Pantry · Shopping.
+- Uses CalMind accounts. No server of its own; records live on CalMind's.
 
 ## Building
 
