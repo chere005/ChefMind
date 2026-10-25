@@ -11,12 +11,14 @@ Recipes, a pantry and a shopping list. A [CalMind](https://github.com/chere005/C
 - Runs on web (PWA), iOS, Android, macOS and Windows. Live at [seancheren.com/ChefMind](https://seancheren.com/ChefMind).
 - No server of its own. Records live on CalMind's.
 
-## Screens
-
-| Recipes | Recipe editor | Pantry | Shopping list |
-| --- | --- | --- | --- |
-| ![Recipes](docs/screenshots/chefmind-recipes-mobile.png) | ![Recipe editor](docs/screenshots/chefmind-recipe-mobile.png) | ![Pantry](docs/screenshots/chefmind-pantry-mobile.png) | ![Shopping list](docs/screenshots/chefmind-shopping-mobile.png) |
-| Recipes in folders; send their ingredients to the list. | Edit ingredients, quantities and steps. | What you have, typed or scanned from a receipt. | Items grouped by aisle. |
+<table>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/chefmind-recipes-mobile.png" width="200" alt="Recipes"><br><sub><b>Recipes.</b> In folders; send their ingredients to the list.</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/chefmind-recipe-mobile.png" width="200" alt="Recipe editor"><br><sub><b>Recipe editor.</b> Ingredients, quantities and steps.</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/chefmind-pantry-mobile.png" width="200" alt="Pantry"><br><sub><b>Pantry.</b> What you have, typed or scanned from a receipt.</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/chefmind-shopping-mobile.png" width="200" alt="Shopping list"><br><sub><b>Shopping list.</b> Items grouped by aisle.</sub></td>
+</tr>
+</table>
 
 ## Run
 
