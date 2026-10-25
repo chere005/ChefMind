@@ -26,25 +26,25 @@ Feel free to deploy this on your own website, build and deploy the iOS version, 
 
 Recipes in folders. Tick the ones you mean to cook and press *Add to shopping list*.
 
-<img src="docs/screenshots/chefmind-recipes-mobile.png" width="320" alt="Recipes">
+<picture><img src="docs/screenshots/chefmind-recipes-mobile.png" width="320" alt="Recipes"></picture>
 
 ### Recipe editor
 
 Ingredients, quantities and steps.
 
-<img src="docs/screenshots/chefmind-recipe-mobile.png" width="320" alt="Recipe editor">
+<picture><img src="docs/screenshots/chefmind-recipe-mobile.png" width="320" alt="Recipe editor"></picture>
 
 ### Pantry
 
 What you have, typed in or scanned from a receipt. Pantry items are left off the shopping list.
 
-<img src="docs/screenshots/chefmind-pantry-mobile.png" width="320" alt="Pantry">
+<picture><img src="docs/screenshots/chefmind-pantry-mobile.png" width="320" alt="Pantry"></picture>
 
 ### Shopping list
 
 Ingredients combined and grouped by aisle.
 
-<img src="docs/screenshots/chefmind-shopping-mobile.png" width="320" alt="Shopping list">
+<picture><img src="docs/screenshots/chefmind-shopping-mobile.png" width="320" alt="Shopping list"></picture>
 
 ## Notes
 
