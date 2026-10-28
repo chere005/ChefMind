@@ -12,7 +12,7 @@ CalMind's recipes + shopping list + pantry, on CalMind's server and accounts. A 
 - **`SYNC_SPACE` (`app/src/api.ts`) is a constant, never configurable** — a build aimable at CalMind's records silently merges two stores.
 - **Never point a local build at the production API.** `config.ts` derives the API from the page ORIGIN; never hardcode `https://seancheren.com/...`.
 - **Reminders are removed, but the `reminder` record type stays** — shopping and pantry rows are reminder records.
-- **Version bump** (`npm run dtp` / `tdtp`: tools/dtp.sh, tools/tdtp.sh) moves five files together: `app/app.json`, `package.json`, `desktop/package.json`, `desktop/src-tauri/tauri.conf.json`, `desktop/src-tauri/Cargo.toml` (Cargo.lock follows).
+- **Version bump** (`npm run dtp` / `tdtp`: tools/dtp.sh, tools/tdtp.sh) moves five files together: `app/app.json`, `package.json`, `desktop/package.json`, `desktop/src-tauri/tauri.conf.json`, `desktop/src-tauri/Cargo.toml` (Cargo.lock follows). `node tools/release-versions.mjs [tag]` checks all five agree (the Release workflow's `prepare` runs it); a new version-bearing file goes in that script AND the lane.
 - **`ios.buildNumber` / `android.versionCode` move by hand** per device build, not per dtp.
 - **Tags are bare `x.y.0`**; no `chefmind-` namespace (old releases retagged 1.0.0/1.0.1/1.1.0).
 - **Prod is the only instance** (seancheren.com/ChefMind, `/home/public/ChefMind` only); `deploy.sh` gates are not optional, no rehearsal. SSH login in gitignored `deploy.conf` (see `deploy.conf.sample`); destination is a guarded constant.
@@ -43,8 +43,9 @@ npm -w @calmind/core run test -- --run -t 'pantry'
 ## Platforms
 
 - **Web**: the only thing `deploy.sh` ships; no ChefMind backend — syncs to CalMind's live API in the `chef` space, and the gate refuses to ship unless that API reports `chef`.
-- **macOS**: Tauri `desktop/`; `dmg` excluded from `bundle.targets`, the `.app` is the artifact.
-- **Windows**: `.msi`/`.exe` built and smoke-tested in CI only (`.github/workflows/desktop-windows.yml`, dispatched after a dtp push); Tauri cannot cross-compile.
+- **macOS**: Tauri `desktop/`; `dmg` excluded from `bundle.targets` (local builds make the `.app`); the Release workflow passes `--bundles dmg` in CI args to build the Apple-silicon dmg. Unsigned.
+- **Windows**: `.msi` + NSIS `.exe` (x64) built and MSI-smoke-tested in CI only (`.github/workflows/release.yml`, on a tag push); Tauri cannot cross-compile.
+- **GitHub Releases**: pushing a bare tag runs `Release` (`.github/workflows/release.yml`): `prepare` (tag == every version file, via `tools/release-versions.mjs`; DRAFT release) → `windows` + `mac` build and `gh release upload` into the draft → `publish` (all 3 files present, `SHA256SUMS.txt`, then published). **Never `actions/upload-artifact`/`download-artifact`** (the account's artifact quota is full); release assets are not counted.
 - **iOS**: `tools/build-platforms.sh --ios` (devicectl) installs to ALL THREE paired phones (Sean, Autumn, Patricia); a refusing phone is warned and skipped, step fails only if none took it.
 - **iOS version**: sync `expo.version` into pbxproj `MARKETING_VERSION` + Info.plist (generated `app/ios` is reused), read both back, and refuse every phone if the BUILT `CFBundleShortVersionString` != app.json's.
 - **No per-phone app cap**: team 2LGYTL3FSJ is PAID.
@@ -52,17 +53,19 @@ npm -w @calmind/core run test -- --run -t 'pantry'
 
 ## The release lane, end to end
 
-- **This repo ships itself**: macOS/iOS/Android via its own `tools/build-platforms.sh` (run by dtp/tdtp); only Windows is CI. Step list is `tools/dtp.sh`'s head comment.
+- **This repo ships itself**: macOS/iOS/Android via its own `tools/build-platforms.sh` (run by dtp/tdtp); the Windows and Mac installers on GitHub are the tag-triggered `Release` workflow's. Step list is `tools/dtp.sh`'s head comment.
 - **Platform flags**: naming one selects only it, none = all, `--web` = release with no platform builds; `tools/dtp.sh` takes the same flags.
 - **Refuses BEFORE shipping, nothing touched**: HEAD not on `main`; uncommitted tracked changes; tree dirty after the pull (`git pull --autostash` exits 0 on a conflicted pop, so re-check); version not `x.y.z`; tag already exists.
 - **A bumped-but-untagged version is SHIPPED AGAIN**, not skipped, so a failed lane re-run burns no number; verify every substitution after (a no-match substitution reports success).
 - **`./deploy.sh --yes-prod`** ships the web, the only deploy; a failed deploy stops everything, never tagged around.
 - **Gate key**: under tdtp, `tools/gate-key.mjs` hashes everything tsc/vitest reads (minus version fields); deploy.sh skips its typecheck + core suite only if the tree still hashes to the key the full pass handed down (and says so), else runs them. `test:deploy` proves it.
 - **macOS bundle BEFORE the tag**: a broken desktop build leaves the version untagged and reusable.
-- **Tag `x.y.0`, push `--atomic --follow-tags`**, then dispatch desktop-windows; `--follow-tags` is per-ref so a tag could land while `main` is rejected. A refused push removes the local tag.
+- **Preflight before the tag**: `tools/preflight.sh <tag>` pushes HEAD to `preflight/<sha7>`, dispatches `Release` with `preflight=true` (builds everything, uploads/publishes nothing, jobs are `continue-on-error` so no failed-job email), prints PASS/FAIL and deletes the branch. A fail stops the lane before tagging (version stays untagged, reusable); `--skip-preflight` is the deliberate bypass. Run it alone before any hand-cut tag too.
+- **Tag `x.y.0`, push `--atomic --follow-tags`**; the tag push starts `Release`, which the lane finds, reports the URL of, and watches after the device builds. `--follow-tags` is per-ref so a tag could land while `main` is rejected. A refused push removes the local tag.
+- **A Release failure after the tag does not un-ship the deploy**: the lane prints the run, the failed jobs and `gh run rerun <id> --failed`, closes the card `ok` severity 2 and ends non-zero (like a device failure). A tag with no release (a past version): `gh workflow run Release --ref main -f tag=<tag>`.
 - **Device builds AFTER the push**, iOS then Android, one at a time never parallel; failure unpicks nothing: prints the `sh tools/build-platforms.sh --ios` to re-run, closes the status card `ok` severity 2, **ends the lane non-zero** (like CoreMind `bin/dtp.sh`).
 - **Heavy-lock**: every platform block in `tools/build-platforms.sh` runs under `tools/heavy-lock.sh` (`/tmp/mind-heavy-<uid>.lock`, waits naming holder every 30 s, gives up after 30 min). It sees only builds that take it (AcctMind, CalMind, ChefMind, MyCalMind blocks, MyCalMind `tools/deploy-device.sh`, AcctMind desktop smoke, CoreMind fallback `bin/build-platforms.sh`).
-- **Not locked, so serialize by hand**: WriteMind/WriteMindCross builds, TestMindSuite qdtp, `npm run desktop`, `app/` `npm run ios`/`android`, terminal xcodebuild, Xcode GUI builds.
+- **Not locked, so serialize by hand**: TestMindSuite qdtp, `npm run desktop`, `app/` `npm run ios`/`android`, terminal xcodebuild, Xcode GUI builds.
 - **`tools/heavy-lock.sh` is canon's bytes** (row in `CoreMind/consumers/ChefMind.tsv`): fix in CoreMind, never here.
 - **Reports to seancheren.com/status** via CoreMind's `bin/report-status.sh` beside this checkout: `start` before touching the tree, `finish` with severity, EXIT/INT/TERM trap; call is `|| true` (CoreMind may be absent).
 - **Under CoreMind's orchestrator `MIND_RUN_ID` is set** and the lane opens no card of its own (one card per batch); unset = it opens/closes its own.

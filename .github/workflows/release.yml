@@ -1,0 +1,418 @@
+# Releases ChefMind Desktop on ONE GitHub Release per version. Pushing a bare version tag (1.30.0, no "v") - or a manual run
+# naming an existing tag - runs four jobs:
+#
+#   prepare  (ubuntu)   the tag must be the app's version in EVERY file that carries it (tools/release-versions.mjs); a tag that
+#                       is already a PUBLISHED release stops the run; the notes are the tag's annotation (else its commit's
+#                       message); a DRAFT release "ChefMind <version>" is made (an earlier run's draft is reused).
+#   windows  (windows)  typecheck, export the web app, tauri build -> the .msi and the NSIS .exe (x64), the MSI installed and
+#                       launched on the runner as a smoke test, then both uploaded into the draft.
+#   mac      (macos-15) Apple silicon (the runner is an arm64 Mac): typecheck, tests, export the web app, tauri build with
+#                       `--bundles dmg` -> ChefMind_<version>_aarch64.dmg, uploaded into the draft. Unsigned, not notarized.
+#   publish  (ubuntu)   every expected file is on the draft; SHA256SUMS.txt is written and attached; the release is published
+#                       (Latest; a version containing "-" is a pre-release). A missing file leaves the release a DRAFT.
+#
+# NO actions/upload-artifact OR download-artifact, anywhere: this account's Actions artifact storage quota is full ("Artifact
+# storage quota has been hit" failed the old Windows-only workflow on 2026-10-22/23). Release assets are not
+# counted against it, and the installers go straight there with `gh release upload`.
+#
+# PREFLIGHT (workflow_dispatch with preflight=true, normally started by tools/preflight.sh): the same jobs on the commit about to
+# be tagged, BEFORE it is tagged. Every job has continue-on-error, so a red job does not make the RUN red (and GitHub sends no
+# failed-job email); nothing is created, uploaded or published; the run summary and each job's result say what failed.
+#
+# Cutting a release: ARCHITECTURE.md, "Releases". A failed job leaves the release a draft nobody sees: fix the cause and re-run
+# the failed job (`gh run rerun <run-id> --failed`); publish runs after it. An existing tag with no release (a past version):
+#   gh workflow run Release --ref main -f tag=<tag>
+#
+# Unsigned: SmartScreen says "Windows protected your PC" on a first install (More info > Run anyway); Gatekeeper stops the
+# first open of the Mac app (right-click > Open, or System Settings > Privacy & Security > Open Anyway).
+name: Release
+
+on:
+  push:
+    tags: ['[0-9]+.[0-9]+.[0-9]+*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "An EXISTING tag to release, e.g. 1.29.0 (bare, no v). Optional in a preflight run."
+        required: false
+        type: string
+      preflight:
+        description: "Preflight: build everything, publish and upload nothing, never fail the run"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  # A pushed tag is its own name; a dispatch names it (blank only in a preflight, where prepare derives it from the files).
+  TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+  PREFLIGHT: ${{ inputs.preflight == true && 'true' || 'false' }}
+  GH_REPO: ${{ github.repository }}
+
+jobs:
+  prepare:
+    name: Tag, notes and the draft release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: ${{ inputs.preflight == true }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: The tag's name
+        run: |
+          if [ -z "$TAG" ]; then
+            if [ "$PREFLIGHT" = true ]; then
+              echo "Preflight with no tag: the tag will be derived from the version files."
+              exit 0
+            fi
+            echo "::error title=No tag::Name the tag to release: gh workflow run Release -f tag=<x.y.z>"
+            exit 1
+          fi
+          if ! printf '%s' "$TAG" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error title=Not a version tag::'$TAG' is not <major>.<minor>.<patch>[-pre]. Tags are bare versions, with no v."
+            exit 1
+          fi
+
+      # A preflight builds the commit the run was dispatched on (there is no tag yet); a release builds the tag.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.PREFLIGHT == 'true' && github.sha || format('refs/tags/{0}', env.TAG) }}
+          fetch-depth: 0
+
+      # The version check comes from the workflow's own ref, not the tag's tree, so an OLD tag (a past version getting its
+      # first release) is checked by the same script as a new one.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: .release
+          sparse-checkout: tools/release-versions.mjs
+          sparse-checkout-cone-mode: false
+
+      - name: The tag is the app's version, in every file that carries it
+        id: version
+        run: |
+          version=$(node .release/tools/release-versions.mjs "$TAG") || exit 1
+          tag="${TAG:-$version}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+          echo "ChefMind $version, tag $tag"
+
+      - name: Refuse a tag that is already a published release
+        id: state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Every release for this tag, drafts included (a draft is not reachable by releases/tags/<tag>). The tag passed the
+          # version pattern above, so it is safe inside the filter.
+          filter='.[] | select(.tag_name == "'"$TAG"'") | .draft'
+          states=$(gh api "repos/$GH_REPO/releases?per_page=100" --paginate --jq "$filter") \
+            || { echo "::error::Could not list the releases of $GH_REPO"; exit 1; }
+          if printf '%s\n' "$states" | grep -qx false; then
+            echo "::error title=Already released::$TAG is a published release; it is never rebuilt. A new version needs a new tag."
+            exit 1
+          fi
+          drafts=$(printf '%s\n' "$states" | grep -cx true || true)
+          if [ "$drafts" -gt 1 ]; then
+            echo "::error title=Two drafts::$drafts draft releases are waiting for $TAG: delete all but one on the Releases page, then re-run."
+            exit 1
+          fi
+          echo "drafts=$drafts" >> "$GITHUB_OUTPUT"
+
+      - name: Release notes from the tag's annotation (or its commit's message)
+        if: env.PREFLIGHT != 'true'
+        run: |
+          # actions/checkout can leave an annotated tag as a lightweight one: fetch the tag object itself.
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+          # The annotation when it says more than a title line; else the tagged commit's whole message.
+          body=$(git for-each-ref "refs/tags/$TAG" --format='%(contents:body)')
+          if [ -n "$(printf '%s' "$body" | tr -d '[:space:]')" ]; then
+            notes=$(git for-each-ref "refs/tags/$TAG" --format='%(contents:subject)%0a%0a%(contents:body)')
+          else
+            notes=$(git log -1 --format=%B "$TAG^{commit}")
+          fi
+          notes=$(printf '%s\n' "$notes" | grep -viE '^(Co-Authored-By|Signed-off-by):' || true)
+          if [ -z "$(printf '%s' "$notes" | tr -d '[:space:]')" ]; then notes="ChefMind $VERSION"; fi
+          {
+            printf '%s\n\n' "$notes"
+            cat <<EOF
+          ## Installing
+
+          - **Windows (x64)**: run \`ChefMind_${VERSION}_x64-setup.exe\` (or the \`.msi\`). The installers are not code-signed, so
+            SmartScreen may say "Windows protected your PC": choose **More info**, then **Run anyway**.
+          - **macOS (Apple silicon)**: open \`ChefMind_${VERSION}_aarch64.dmg\` and drag ChefMind to Applications. The app is not
+            notarized, so Gatekeeper stops the first launch: right-click the app and choose **Open**, or go to System Settings >
+            Privacy & Security and choose **Open Anyway**.
+          - \`SHA256SUMS.txt\` lists the checksum of every installer.
+          EOF
+          } > "$RUNNER_TEMP/release-notes.md"
+          cat "$RUNNER_TEMP/release-notes.md"
+
+      - name: The draft release for the tag
+        if: env.PREFLIGHT != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRAFTS: ${{ steps.state.outputs.drafts }}
+        run: |
+          title="ChefMind $VERSION"
+          if [ "$DRAFTS" = 1 ]; then
+            echo "Reusing the draft release for $TAG (an earlier run's)"
+            gh release edit "$TAG" --title "$title" --notes-file "$RUNNER_TEMP/release-notes.md"
+          else
+            gh release create "$TAG" --draft --verify-tag --title "$title" --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
+
+  windows:
+    name: Windows (msi + exe)
+    needs: prepare
+    runs-on: windows-latest
+    timeout-minutes: 60
+    continue-on-error: ${{ inputs.preflight == true }}
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: The prepare job's version
+        run: |
+          if [ -z "$VERSION" ] || [ -z "$TAG" ]; then
+            echo "::error title=No version::the prepare job produced no version, so there is nothing to build"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.PREFLIGHT == 'true' && github.sha || format('refs/tags/{0}', env.TAG) }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install deps
+        run: npm ci
+
+      # The tests are the Mac job's: packages/core's test script is `TZ=America/Chicago vitest`, which Windows' npm shell
+      # cannot run. The typecheck is the same on every platform.
+      - name: Typecheck
+        run: npm run typecheck
+
+      # export:web PLUS the head patch: the export script is bare, the patch is a separate step exactly as deploy.sh runs it,
+      # and the desktop bundle should carry the same index.html the site serves. TWO STEPS: a failed export must fail the
+      # step, not be masked by a head patch that then "succeeded" against a stale or absent dist.
+      - name: Export the web app
+        run: npm run export:web
+      - name: Patch the exported head
+        run: node tools/patch-web-html.mjs app/dist/index.html
+
+      # The targets are tauri.conf.json's: on Windows that is msi and nsis (the "app" target is macOS-only).
+      - name: Build the Windows bundles
+        run: npm -w @chefmind/desktop run build
+
+      - name: The files this job will attach
+        run: |
+          bundle=desktop/src-tauri/target/release/bundle
+          for f in "$bundle/msi/ChefMind_${VERSION}_x64_en-US.msi" "$bundle/nsis/ChefMind_${VERSION}_x64-setup.exe"; do
+            if [ ! -f "$f" ]; then
+              echo "::error title=Missing build output::expected $f"
+              ls -R "$bundle" || true
+              exit 1
+            fi
+            ls -l "$f"
+          done
+
+      # The runner IS a Windows machine with a desktop session, so the smoke that used to wait for a human runs here: install
+      # the MSI the way a user's machine would, launch what it installed, and hold it to the bar the Mac smoke sets - it
+      # launches, it survives eight seconds, it puts up a real window. A window showing an error page still passes (the same
+      # honest limitation the smoke has always had).
+      - name: Smoke the MSI on the runner
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem desktop/src-tauri/target/release/bundle/msi/*.msi | Select-Object -First 1
+          if (-not $msi) { throw 'no MSI to smoke' }
+          Write-Host "installing $($msi.Name)"
+          $p = Start-Process msiexec -ArgumentList "/i `"$($msi.FullName)`" /qn" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec failed with exit $($p.ExitCode)" }
+          $exe = Get-ChildItem "$env:ProgramFiles","${env:ProgramFiles(x86)}","$env:LOCALAPPDATA\Programs" -Recurse -Include ChefMind.exe,chefmind-desktop.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { throw 'the MSI reported success but installed no ChefMind binary' }
+          Write-Host "launching $($exe.FullName)"
+          $app = Start-Process $exe.FullName -PassThru
+          Start-Sleep -Seconds 8
+          if ($app.HasExited) { throw "the installed app exited within 8 seconds (code $($app.ExitCode))" }
+          # The window takes a beat to be titled; three looks over six seconds.
+          $title = ''
+          foreach ($i in 1..3) {
+            $title = (Get-Process -Id $app.Id -ErrorAction SilentlyContinue).MainWindowTitle
+            if ($title -like '*ChefMind*') { break }
+            Start-Sleep -Seconds 2
+          }
+          if ($title -notlike '*ChefMind*') { throw "the app is running but shows no ChefMind window - got '$title'" }
+          Write-Host "window up: '$title' - stopping it"
+          Stop-Process -Id $app.Id
+
+      - name: Upload the installers to the draft release
+        if: env.PREFLIGHT != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bundle=desktop/src-tauri/target/release/bundle
+          gh release upload "$TAG" \
+            "$bundle/msi/ChefMind_${VERSION}_x64_en-US.msi" \
+            "$bundle/nsis/ChefMind_${VERSION}_x64-setup.exe" \
+            --clobber
+
+  mac:
+    name: macOS (dmg, Apple silicon)
+    needs: prepare
+    runs-on: macos-15
+    timeout-minutes: 60
+    continue-on-error: ${{ inputs.preflight == true }}
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: The prepare job's version
+        run: |
+          if [ -z "$VERSION" ] || [ -z "$TAG" ]; then
+            echo "::error title=No version::the prepare job produced no version, so there is nothing to build"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.PREFLIGHT == 'true' && github.sha || format('refs/tags/{0}', env.TAG) }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install deps
+        run: npm ci
+
+      # The repo's static gate and suites, on the platform they are written for (the Windows job runs the typecheck only).
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Tests
+        run: npm test
+
+      - name: Export the web app
+        run: npm run export:web
+      - name: Patch the exported head
+        run: node tools/patch-web-html.mjs app/dist/index.html
+
+      # --bundles dmg is passed here, not set in tauri.conf.json: the config's targets stay as they are for local builds.
+      # No signing identity is configured, so the app is unsigned (Gatekeeper's "right-click > Open" on first launch).
+      - name: Build the dmg
+        run: npm -w @chefmind/desktop run build -- --bundles dmg
+
+      - name: The files this job will attach
+        run: |
+          dmg="desktop/src-tauri/target/release/bundle/dmg/ChefMind_${VERSION}_aarch64.dmg"
+          if [ ! -f "$dmg" ]; then
+            echo "::error title=Missing build output::expected $dmg"
+            ls -R desktop/src-tauri/target/release/bundle || true
+            exit 1
+          fi
+          ls -l "$dmg"
+          hdiutil verify "$dmg"
+
+      - name: Upload the dmg to the draft release
+        if: env.PREFLIGHT != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$TAG" "desktop/src-tauri/target/release/bundle/dmg/ChefMind_${VERSION}_aarch64.dmg" --clobber
+
+  publish:
+    name: Every file is there; publish the release
+    needs: [prepare, windows, mac]
+    if: inputs.preflight != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Every expected file is on the release
+        run: |
+          names=$(gh release view "$TAG" --json assets --jq '.assets[].name') \
+            || { echo "::error::No release for $TAG"; exit 1; }
+          echo "Assets:"; printf '%s\n' "$names" | sed 's/^/  /'
+          missing=""
+          for f in "ChefMind_${VERSION}_x64_en-US.msi" "ChefMind_${VERSION}_x64-setup.exe" "ChefMind_${VERSION}_aarch64.dmg"; do
+            printf '%s\n' "$names" | grep -qxF "$f" || missing="$missing $f"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error title=Release incomplete::Missing${missing}; the release stays a draft."
+            exit 1
+          fi
+
+      # The assets are fetched through the API by id: a draft release is not reachable by tag.
+      - name: SHA256SUMS.txt
+        run: |
+          mkdir sums
+          cd sums
+          for f in "ChefMind_${VERSION}_x64_en-US.msi" "ChefMind_${VERSION}_x64-setup.exe" "ChefMind_${VERSION}_aarch64.dmg"; do
+            aid=$(gh release view "$TAG" --json assets --jq ".assets[] | select(.name == \"$f\") | .apiUrl | split(\"/\") | last")
+            gh api "repos/$GH_REPO/releases/assets/$aid" -H 'Accept: application/octet-stream' > "$f"
+          done
+          sha256sum ChefMind_* > ../SHA256SUMS.txt
+          cd ..
+          cat SHA256SUMS.txt
+          gh release upload "$TAG" SHA256SUMS.txt --clobber
+
+      - name: Publish
+        run: |
+          if [[ "$VERSION" == *-* ]]; then
+            gh release edit "$TAG" --draft=false --prerelease
+          else
+            gh release edit "$TAG" --draft=false --latest
+          fi
+          gh release view "$TAG" --json url --jq .url
+
+  # Preflight only: what each job did, in the run summary (a continue-on-error job does not turn the run red).
+  summary:
+    name: Preflight summary
+    needs: [prepare, windows, mac]
+    if: always() && inputs.preflight == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Results
+        env:
+          PREPARE: ${{ needs.prepare.result }}
+          WINDOWS: ${{ needs.windows.result }}
+          MAC: ${{ needs.mac.result }}
+        run: |
+          {
+            echo "## Preflight (nothing created, uploaded or published)"
+            echo
+            echo "| Job | Result |"
+            echo "| --- | --- |"
+            echo "| Tag, notes and the draft release | $PREPARE |"
+            echo "| Windows (msi + exe) | $WINDOWS |"
+            echo "| macOS (dmg, Apple silicon) | $MAC |"
+            echo
+            echo "A continue-on-error job can report success here after a failed step: tools/preflight.sh reads the steps."
+          } >> "$GITHUB_STEP_SUMMARY"

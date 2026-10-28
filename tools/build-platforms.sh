@@ -2,8 +2,8 @@
 # The platforms this repo ships that deploy.sh does not: the macOS desktop
 # bundle, an iOS build installed on every phone this app belongs on (built
 # once, installed to each of them), and an Android build on an emulator.
-# Windows is CI's (.github/workflows/desktop-windows.yml) — Tauri does not
-# cross-compile.
+# Windows is CI's (.github/workflows/release.yml builds it on a tag, and
+# tools/preflight.sh checks it before one) — Tauri does not cross-compile.
 #
 #   sh tools/build-platforms.sh              all three
 #   sh tools/build-platforms.sh --mac        just the desktop bundle
@@ -84,7 +84,7 @@ fi
 # and MyCalMind, MyCalMind's deploy-device.sh, AcctMind's desktop smoke and
 # CoreMind's fallback bin/build-platforms.sh. It looks for no xcodebuild,
 # gradle or cargo process, so a block here still starts beside, unseen:
-# WriteMind's builds and tests (and WriteMindCross's), a TestMindSuite fork's
+# another app's builds and tests, a TestMindSuite fork's
 # lane (qdtp, after every feature), and any build run by hand — this repo's
 # `npm run desktop` or app/'s `npm run ios`/`android`, an xcodebuild in a
 # terminal, or a build started from Xcode's own window. For those, "one at a
@@ -103,7 +103,7 @@ fi
 # THE PATCH IS NOT OPTIONAL, and this is the bug that was here. CoreMind's mac
 # path ran `export:web` alone, so the Mac bundle carried the bare export —
 # while the site and the Windows CI bundle both carry the PATCHED index.html.
-# `.github/workflows/desktop-windows.yml` says why in as many words: the
+# `.github/workflows/release.yml` says why in as many words: the
 # desktop bundle should carry the same index.html the site serves. The Mac was
 # the one build that did not, and nothing compared them.
 #

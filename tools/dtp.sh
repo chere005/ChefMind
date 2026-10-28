@@ -21,17 +21,30 @@
 #   4. the macOS bundle, from the export deploy.sh just shipped — BEFORE the
 #      tag, so a broken desktop build leaves the version untagged and a re-run
 #      reuses it, exactly as a failed deploy does
-#   5. tag X.Y.0 (BARE — no v) (annotated)
-#   6. git push --follow-tags
-#   7. dispatch the desktop-windows workflow (CI builds the pushed tree);
-#      a dispatch failure is reported but does not un-ship the release
-#   8. the device builds — iOS on the phone, Android on an emulator — AFTER
+#   5. PREFLIGHT, right before the tag: tools/preflight.sh runs the Release
+#      workflow's builds (Windows .msi/.exe, macOS dmg, on GitHub) on this very
+#      commit, publishing nothing. A failure stops the lane exactly as step 4
+#      does: the version stays untagged and a re-run reuses it. Never tag
+#      around a failed preflight; --skip-preflight is the deliberate way past.
+#   6. tag X.Y.0 (BARE — no v) (annotated)
+#   7. git push --atomic --follow-tags — the tag push starts the Release
+#      workflow (.github/workflows/release.yml), which builds the installers
+#      and publishes ONE GitHub release for the version
+#   8. find the Release run the tag push started and print its URL; a run that
+#      cannot be found is reported but does not un-ship the release
+#   9. the device builds — iOS on the phone, Android on an emulator — AFTER
 #      the push and never fatal TO THE RELEASE, because the release has
-#      already happened and an unplugged phone must not un-ship it. The lane
-#      still exits non-zero if one did not finish (see the foot of this file):
-#      the release stands, the exit status does not lie about it.
+#      already happened and an unplugged phone must not un-ship it.
+#  10. watch the Release run (it has been running beside the device builds) and
+#      report the published release's URL. A Release failure is the same kind
+#      of thing as a device build that did not finish: the deploy stands, the
+#      tag stands, and the failure is reported loudly with the exact command to
+#      re-run it (gh run rerun <id> --failed).
+#      The lane still exits non-zero if a device build or the Release did not
+#      finish (see the foot of this file): the release stands, the exit status
+#      does not lie about it.
 #
-# THIS REPO SHIPS ITSELF. Steps 4 and 8 were CoreMind's alone until
+# THIS REPO SHIPS ITSELF. Steps 4 and 9 were CoreMind's alone until
 # 2026-08-23, and the hole that left was invisible from inside either repo: a
 # release could tag and push with the Mac bundle still built from whatever was
 # lying around. It did — the .app was a day behind and had never heard of the
@@ -48,10 +61,13 @@
 set -e
 cd "$(dirname "$0")/.."
 
-FULL=0; PICKED=0; WANT_MAC=0; WANT_IOS=0; WANT_ANDROID=0
+FULL=0; PICKED=0; WANT_MAC=0; WANT_IOS=0; WANT_ANDROID=0; SKIP_PREFLIGHT=0
 for a in "$@"; do
   case "$a" in
     --full)    FULL=1 ;;
+    # Not a platform: it does not count as picking one. Ships without the
+    # Release preflight (step 5) — for when GitHub itself is the problem.
+    --skip-preflight) SKIP_PREFLIGHT=1 ;;
     --mac)     WANT_MAC=1;     PICKED=1 ;;
     --ios)     WANT_IOS=1;     PICKED=1 ;;
     --android) WANT_ANDROID=1; PICKED=1 ;;
@@ -297,7 +313,36 @@ if [ "$WANT_MAC" = 1 ]; then
   fi
 fi
 
+# ------------------------------------------------------------------- preflight
+# The Release workflow's builds, on the commit about to be tagged, BEFORE it is
+# tagged: a Windows-only or macOS-runner-only break is found here, with the
+# version still untagged and reusable, instead of after a tag has gone out.
+# The preflight run publishes nothing and never fails its GitHub run (so no
+# failed-job email); tools/preflight.sh reads the jobs and exits 1 on a failure.
+if [ "$SKIP_PREFLIGHT" = 1 ]; then
+  echo "==> preflight skipped (--skip-preflight)"
+else
+  echo "==> preflight: the Release builds on this commit, before the tag"
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "" >&2
+    echo "THE WEB SHIPPED, but there is no gh CLI to run the Release preflight — so nothing was tagged." >&2
+    echo "  Install gh and re-run (the lane reuses ${NEW}), or pass --skip-preflight." >&2
+    exit 1
+  fi
+  if ! sh tools/preflight.sh "$NEW"; then
+    echo "" >&2
+    echo "THE WEB SHIPPED, but the Release preflight failed — so nothing was tagged." >&2
+    echo "  Fix what it names and re-run: the lane reuses ${NEW}, which is the version" >&2
+    echo "  already live. (--skip-preflight tags anyway; the Release run then fails on GitHub instead.)" >&2
+    exit 1
+  fi
+fi
+
 # --------------------------------------------------------------- tag, push, CI
+# Taken before the push, with two minutes of slack (this machine's clock has run
+# ~17 s ahead of GitHub's): the Release run is looked for by tag, commit and
+# creation time below.
+BEFORE_PUSH=$(date -u -d '-120 seconds' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-120S +%Y-%m-%dT%H:%M:%SZ)
 git tag -a "$NEW" -m "ChefMind $NEW"
 # --atomic, because `git push --follow-tags` is per-ref: when origin/main has
 # moved under a long deploy, the TAG lands on the remote while main is
@@ -315,10 +360,33 @@ if ! git push --atomic --follow-tags origin main; then
 fi
 echo "==> pushed, tagged $NEW"
 
-if command -v gh >/dev/null 2>&1 && [ -f .github/workflows/desktop-windows.yml ]; then
-  gh workflow run desktop-windows \
-    && echo "==> desktop-windows dispatched (CI builds the pushed tree)" \
-    || echo "   WARNING: desktop-windows dispatch failed — run it from the Actions tab" >&2
+# The tag push started the Release workflow (builds the installers on GitHub's
+# Windows and macOS runners and publishes ONE release). Found here so its URL is
+# on screen at once; watched at the foot of the lane, after the device builds,
+# so a 20-minute CI run does not hold the phone builds up.
+RELEASE_RUN=""
+RELEASE_FAILED=""
+if command -v gh >/dev/null 2>&1; then
+  TAG_SHA=$(git rev-parse "$NEW^{commit}")
+  _i=0
+  while [ "$_i" -lt 30 ]; do
+    RELEASE_RUN=$(gh run list --workflow release.yml --branch "$NEW" --event push --limit 5 \
+      --json databaseId,headSha,createdAt \
+      --jq "[.[] | select(.headSha == \"$TAG_SHA\" and .createdAt >= \"$BEFORE_PUSH\")][0].databaseId // empty" 2>/dev/null || true)
+    [ -n "$RELEASE_RUN" ] && break
+    _i=$((_i + 1))
+    sleep 4
+  done
+  if [ -n "$RELEASE_RUN" ]; then
+    echo "==> Release run started by the tag push: $(gh run view "$RELEASE_RUN" --json url --jq .url 2>/dev/null || echo "run $RELEASE_RUN")"
+  else
+    RELEASE_FAILED=1
+    echo "" >&2
+    echo "   WARNING: the tag push started no Release run that could be found." >&2
+    echo "   Look at the Actions tab, or start it by hand:  gh workflow run Release --ref main -f tag=$NEW" >&2
+  fi
+else
+  echo "   WARNING: no gh CLI — the Release run (installers, GitHub release) is not watched; see the Actions tab" >&2
 fi
 
 # ------------------------------------------------------------- the device builds
@@ -347,13 +415,46 @@ if [ -n "$DEVICE_FAILED" ]; then
 fi
 
 
+# ----------------------------------------------------------- the Release run
+# It has been running beside the device builds. Watched to the end, then the
+# published release's URL is printed — or, if it failed, the loud version, with
+# the exact command to run it again. The deploy and the tag stand either way.
+if [ -n "$RELEASE_RUN" ]; then
+  echo "==> waiting for the Release run $RELEASE_RUN (installers built on GitHub)"
+  gh run watch "$RELEASE_RUN" --interval 30 >/dev/null 2>&1 || true
+  # gh run watch can return early if the connection drops: wait for "completed".
+  while [ "$(gh run view "$RELEASE_RUN" --json status --jq .status 2>/dev/null || echo unknown)" != completed ]; do
+    sleep 30
+  done
+  RELEASE_CONCLUSION=$(gh run view "$RELEASE_RUN" --json conclusion --jq .conclusion 2>/dev/null || echo unknown)
+  RELEASE_URL=$(gh run view "$RELEASE_RUN" --json url --jq .url 2>/dev/null || echo "run $RELEASE_RUN")
+  RELEASE_DRAFT=$(gh release view "$NEW" --json isDraft --jq .isDraft 2>/dev/null || echo unknown)
+  if [ "$RELEASE_CONCLUSION" = success ] && [ "$RELEASE_DRAFT" = false ]; then
+    echo "==> Release published: $(gh release view "$NEW" --json url --jq .url 2>/dev/null)"
+    echo "    run: $RELEASE_URL"
+  else
+    RELEASE_FAILED=1
+    echo "" >&2
+    echo "$NEW IS LIVE AND TAGGED, but the GitHub release was NOT published (run: $RELEASE_CONCLUSION, release draft: $RELEASE_DRAFT)." >&2
+    echo "  Run:  $RELEASE_URL" >&2
+    gh run view "$RELEASE_RUN" --json jobs --jq '.jobs[] | select(.conclusion == "failure") | .name as $j | ([.steps[]? | select(.conclusion == "failure") | .name] | join("; ")) as $s | "  failed: \($j) > \($s)"' >&2 2>/dev/null || true
+    echo "  Fix the cause, then re-run only what failed (the release stays a draft meanwhile):" >&2
+    echo "    gh run rerun $RELEASE_RUN --failed" >&2
+    echo "  Or, for a fresh run of the same tag:  gh workflow run Release --ref main -f tag=$NEW" >&2
+  fi
+fi
+
 # The page is told how it ended, and with what severity: a live, tagged release
-# whose phone build did not run is not a failure, but it is not a clean 0 either.
+# whose phone build did not run, or whose GitHub release did not publish, is
+# not a failure, but it is not a clean 0 either.
 beat_stop
 REPORT_DONE=1
+PENDING=""
+[ -z "$RELEASE_FAILED" ] || PENDING="$PENDING; GitHub release not published"
+[ -z "$DEVICE_FAILED" ] || PENDING="$PENDING; device builds pending:$DEVICE_FAILED"
 if [ -n "$RUN_ID" ]; then
-  if [ -n "$DEVICE_FAILED" ]; then
-    sh "$REPORTER" finish "$RUN_ID" ok 2 "$NEW live; device builds pending:$DEVICE_FAILED" >/dev/null 2>&1 || true
+  if [ -n "$PENDING" ]; then
+    sh "$REPORTER" finish "$RUN_ID" ok 2 "$NEW live$PENDING" >/dev/null 2>&1 || true
   else
     sh "$REPORTER" finish "$RUN_ID" ok 0 "$NEW live" >/dev/null 2>&1 || true
   fi
@@ -373,8 +474,8 @@ fi
 # call above has already run by the time control reaches this, so the exit
 # cannot jump the status report, and the EXIT trap's failed-3 fallback stays
 # suppressed — the run is finished, not stopped.
-if [ -n "$DEVICE_FAILED" ]; then
-  echo "==> $NEW is live and tagged; the lane ends non-zero for the device builds above"
+if [ -n "$DEVICE_FAILED" ] || [ -n "$RELEASE_FAILED" ]; then
+  echo "==> $NEW is live and tagged; the lane ends non-zero for the failures above"
   exit 1
 fi
 echo "==> dtp done: $NEW is live"
