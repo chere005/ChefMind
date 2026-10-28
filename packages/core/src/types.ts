@@ -103,9 +103,11 @@ export type Event = {
  *  before it existed has none, and reads as a plain note — which is exactly
  *  what Sean's hand-typed marker-shaped notes turned out to be (2026-08-19);
  *  see isRecipeNote in recipe.ts. */
+export type NoteType = 'note' | 'recipe' | 'daily-log';
+export type DailyLogCard = { id: string; date: string; food: string; exercise: string; mood: string };
 export type Note = {
   title: string; body: string; date: string | null;
-  folderId: string; sectionId: string; ord: string; recipe?: boolean;
+  folderId: string; sectionId: string; ord: string; recipe?: boolean; noteType?: NoteType; logCards?: DailyLogCard[];
   /**
    * VARIANTS of one recipe (Sean, 2026-08-22, of the Cheese card: "a dropdown
    * next to the 1/2x 1x and 2x buttons that lets you choose a varient,
