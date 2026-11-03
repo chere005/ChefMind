@@ -71,14 +71,17 @@ for a in "$@"; do
     --mac)     WANT_MAC=1;     PICKED=1 ;;
     --ios)     WANT_IOS=1;     PICKED=1 ;;
     --android) WANT_ANDROID=1; PICKED=1 ;;
-    # The release on its own. Not the same as naming no flag at all, which
-    # means every platform — this is the way to say none.
+    # The release on its own — what a bare dtp does anyway; a bare tdtp
+    # builds every platform, and this is the way to say none.
     --web)     PICKED=1 ;;
     *) echo "unknown flag: $a" >&2; exit 1 ;;
   esac
 done
-# --full is not a platform, so `tdtp` with no other flag still means all three.
-[ "$PICKED" = 1 ] || { WANT_MAC=1; WANT_IOS=1; WANT_ANDROID=1; }
+# --full is not a platform: `tdtp` with no other flag means all three, `dtp`
+# with no other flag means the web release alone (Sean, 2026-11-02: "dtp needs
+# to be significantly faster … make sure tdtp is thorough"). Name a platform
+# to build it in a dtp.
+[ "$PICKED" = 1 ] || [ "$FULL" = 0 ] || { WANT_MAC=1; WANT_IOS=1; WANT_ANDROID=1; }
 
 # Set below by the --full pass and by nothing else. Inherited from a shell or a
 # parent lane, it would tell deploy.sh that checks passed which THIS run never
@@ -215,6 +218,8 @@ if [ "$FULL" = 1 ]; then
   # The app's own suite — the row-drag maths, the one screen logic with
   # tests of its own. No lane path ran it until 2026-10-01; `npm test` did.
   npm run -s test:app -- --reporter=dot || { echo "app suite failed — nothing shipped" >&2; exit 1; }
+  # The deploy script's own guards — no lane ran them (2026-11-02).
+  npm run -s test:deploy || { echo "deploy-guard check failed — nothing shipped" >&2; exit 1; }
   KEY_AFTER=$(node tools/gate-key.mjs) || KEY_AFTER=""
   if [ -n "$KEY_BEFORE" ] && [ "$KEY_BEFORE" = "$KEY_AFTER" ]; then
     CHEF_GATES_PASSED="$KEY_BEFORE"
@@ -223,6 +228,16 @@ if [ "$FULL" = 1 ]; then
   else
     echo "    (the tree changed while they ran, or could not be keyed — deploy.sh runs its own checks)"
   fi
+fi
+
+# What the Release workflow builds from, changed since the last tag? Read
+# BEFORE the bump commit, which touches the manifests every time. A dtp skips
+# the 5–10 minute preflight when the answer is no; tdtp always runs it.
+LAST_TAG=$(git describe --tags --abbrev=0 --match '[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || true)
+RELEASE_INPUTS=1
+if [ -n "$LAST_TAG" ] && ! git diff --name-only "$LAST_TAG" HEAD \
+    | grep -qE '^(\.github/|desktop/)|(^|/)package(-lock)?\.json$|(^|/)Cargo\.(toml|lock)$'; then
+  RELEASE_INPUTS=0
 fi
 
 # ------------------------------------------------------------------ the version
@@ -321,6 +336,8 @@ fi
 # failed-job email); tools/preflight.sh reads the jobs and exits 1 on a failure.
 if [ "$SKIP_PREFLIGHT" = 1 ]; then
   echo "==> preflight skipped (--skip-preflight)"
+elif [ "$FULL" = 0 ] && [ "$RELEASE_INPUTS" = 0 ]; then
+  echo "==> preflight: skipped (dtp; nothing the Release builds from changed since $LAST_TAG — tdtp always runs it)"
 else
   echo "==> preflight: the Release builds on this commit, before the tag"
   if ! command -v gh >/dev/null 2>&1; then
@@ -419,7 +436,11 @@ fi
 # It has been running beside the device builds. Watched to the end, then the
 # published release's URL is printed — or, if it failed, the loud version, with
 # the exact command to run it again. The deploy and the tag stand either way.
-if [ -n "$RELEASE_RUN" ]; then
+# dtp does not wait for it (GitHub mails a red run; tdtp is the lane that
+# watches) — that wait was most of a dtp's wall clock.
+if [ -n "$RELEASE_RUN" ] && [ "$FULL" = 0 ]; then
+  echo "==> Release run left running (dtp does not watch it)"
+elif [ -n "$RELEASE_RUN" ]; then
   echo "==> waiting for the Release run $RELEASE_RUN (installers built on GitHub)"
   gh run watch "$RELEASE_RUN" --interval 30 >/dev/null 2>&1 || true
   # gh run watch can return early if the connection drops: wait for "completed".

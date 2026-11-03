@@ -54,7 +54,8 @@ npm -w @calmind/core run test -- --run -t 'pantry'
 ## The release lane, end to end
 
 - **This repo ships itself**: macOS/iOS/Android via its own `tools/build-platforms.sh` (run by dtp/tdtp); the Windows and Mac installers on GitHub are the tag-triggered `Release` workflow's. Step list is `tools/dtp.sh`'s head comment.
-- **Platform flags**: naming one selects only it, none = all, `--web` = release with no platform builds; `tools/dtp.sh` takes the same flags.
+- **Platform flags**: naming one selects only it, none = all for tdtp but web only for dtp, `--web` = release with no platform builds; `tools/dtp.sh` takes the same flags.
+- **dtp is fast, tdtp thorough**: dtp skips the preflight unless `desktop/`/`.github/`/a manifest changed since the last tag, and leaves the Release run unwatched; tdtp runs both plus `test:deploy`.
 - **Refuses BEFORE shipping, nothing touched**: HEAD not on `main`; uncommitted tracked changes; tree dirty after the pull (`git pull --autostash` exits 0 on a conflicted pop, so re-check); version not `x.y.z`; tag already exists.
 - **A bumped-but-untagged version is SHIPPED AGAIN**, not skipped, so a failed lane re-run burns no number; verify every substitution after (a no-match substitution reports success).
 - **`./deploy.sh --yes-prod`** ships the web, the only deploy; a failed deploy stops everything, never tagged around.
